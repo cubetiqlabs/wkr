@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aspect-build/cubis-wkr/internal/config"
+	"github.com/cubetiqlabs/cubis-wkr/internal/config"
 )
 
 // Pool manages concurrent worker executions with resource limits.

@@ -3,7 +3,7 @@ package database
 import (
 	"log/slog"
 
-	"github.com/aspect-build/cubis-wkr/internal/model"
+	"github.com/cubetiqlabs/cubis-wkr/internal/model"
 	"gorm.io/gorm"
 )
 

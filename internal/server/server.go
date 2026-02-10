@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/aspect-build/cubis-wkr/internal/config"
+	"github.com/cubetiqlabs/cubis-wkr/internal/config"
 	"github.com/gofiber/fiber/v3"
 )
 

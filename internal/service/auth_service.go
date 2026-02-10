@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aspect-build/cubis-wkr/internal/model"
-	"github.com/aspect-build/cubis-wkr/internal/repository"
+	"github.com/cubetiqlabs/cubis-wkr/internal/model"
+	"github.com/cubetiqlabs/cubis-wkr/internal/repository"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var (
-	ErrUserNotFound     = errors.New("user not found")
-	ErrEmailExists      = errors.New("email already exists")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrEmailExists        = errors.New("email already exists")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 )
 

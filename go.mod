@@ -1,4 +1,4 @@
-module github.com/aspect-build/cubis-wkr
+module github.com/cubetiqlabs/cubis-wkr
 
 go 1.25.4
 

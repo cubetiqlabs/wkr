@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/aspect-build/cubis-wkr/internal/service"
+	"github.com/cubetiqlabs/cubis-wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 )

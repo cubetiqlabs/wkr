@@ -3,9 +3,9 @@ package handler
 import (
 	"time"
 
-	"github.com/aspect-build/cubis-wkr/internal/model"
-	"github.com/aspect-build/cubis-wkr/internal/runtime"
-	"github.com/aspect-build/cubis-wkr/internal/service"
+	"github.com/cubetiqlabs/cubis-wkr/internal/model"
+	"github.com/cubetiqlabs/cubis-wkr/internal/runtime"
+	"github.com/cubetiqlabs/cubis-wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 )

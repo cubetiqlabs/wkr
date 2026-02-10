@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/aspect-build/cubis-wkr/internal/model"
-	"github.com/aspect-build/cubis-wkr/internal/repository"
+	"github.com/cubetiqlabs/cubis-wkr/internal/model"
+	"github.com/cubetiqlabs/cubis-wkr/internal/repository"
 	"github.com/google/uuid"
 )
 

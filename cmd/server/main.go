@@ -7,13 +7,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/aspect-build/cubis-wkr/internal/config"
-	"github.com/aspect-build/cubis-wkr/internal/database"
-	"github.com/aspect-build/cubis-wkr/internal/handler"
-	"github.com/aspect-build/cubis-wkr/internal/repository"
-	"github.com/aspect-build/cubis-wkr/internal/runtime"
-	"github.com/aspect-build/cubis-wkr/internal/server"
-	"github.com/aspect-build/cubis-wkr/internal/service"
+	"github.com/cubetiqlabs/cubis-wkr/internal/config"
+	"github.com/cubetiqlabs/cubis-wkr/internal/database"
+	"github.com/cubetiqlabs/cubis-wkr/internal/handler"
+	"github.com/cubetiqlabs/cubis-wkr/internal/repository"
+	"github.com/cubetiqlabs/cubis-wkr/internal/runtime"
+	"github.com/cubetiqlabs/cubis-wkr/internal/server"
+	"github.com/cubetiqlabs/cubis-wkr/internal/service"
 )
 
 func main() {

@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"github.com/aspect-build/cubis-wkr/internal/database"
-	"github.com/aspect-build/cubis-wkr/internal/runtime"
+	"github.com/cubetiqlabs/cubis-wkr/internal/database"
+	"github.com/cubetiqlabs/cubis-wkr/internal/runtime"
 	"github.com/gofiber/fiber/v3"
 	"gorm.io/gorm"
 )
