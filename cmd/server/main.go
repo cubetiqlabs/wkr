@@ -24,9 +24,16 @@ import (
 )
 
 func main() {
-	cfgPath := os.Getenv("CUBIS_CONFIG")
+	var cfgPath string
+	if len(os.Args) > 1 {
+		cfgPath = os.Args[1]
+	}
+
 	if cfgPath == "" {
-		cfgPath = "config.yml"
+		cfgPath = os.Getenv("CUBIS_CONFIG")
+		if cfgPath == "" {
+			cfgPath = "config.yml"
+		}
 	}
 
 	cfg, err := config.Load(cfgPath)

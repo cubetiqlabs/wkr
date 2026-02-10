@@ -41,6 +41,7 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    command: ["./wkr", "/app/config-edge.yml"]
     healthcheck:
       test:
         [
