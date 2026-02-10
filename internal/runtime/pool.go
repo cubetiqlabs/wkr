@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/cubetiqlabs/cubis-wkr/internal/config"
+	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
+	"go.uber.org/zap"
 )
 
 // Pool manages concurrent worker executions with resource limits.
@@ -28,7 +29,6 @@ func NewPool(engine Engine, cfg config.RuntimeConfig) *Pool {
 }
 
 func (p *Pool) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
-	// Acquire semaphore slot
 	select {
 	case p.semaphore <- struct{}{}:
 		defer func() { <-p.semaphore }()
@@ -45,7 +45,6 @@ func (p *Pool) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionRe
 		p.mu.Unlock()
 	}()
 
-	// Apply execution timeout
 	timeout := p.cfg.MaxExecutionTime
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -58,21 +57,21 @@ func (p *Pool) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionRe
 	elapsed := time.Since(start)
 
 	if err != nil {
-		slog.Error("worker execution failed",
-			"worker", req.WorkerName,
-			"runtime", req.Runtime,
-			"duration", elapsed,
-			"error", err,
+		logger.Error("worker execution failed",
+			zap.String("worker", req.WorkerName),
+			zap.String("runtime", req.Runtime),
+			zap.Duration("duration", elapsed),
+			zap.Error(err),
 		)
 		return nil, err
 	}
 
 	result.Duration = elapsed
-	slog.Info("worker executed",
-		"worker", req.WorkerName,
-		"runtime", req.Runtime,
-		"status", result.StatusCode,
-		"duration", elapsed,
+	logger.Info("worker executed",
+		zap.String("worker", req.WorkerName),
+		zap.String("runtime", req.Runtime),
+		zap.Int("status", result.StatusCode),
+		zap.Duration("duration", elapsed),
 	)
 	return result, nil
 }

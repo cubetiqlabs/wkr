@@ -3,18 +3,19 @@ package database
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cubetiqlabs/cubis-wkr/internal/config"
+	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
+	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{
-		Logger:                 logger.Default.LogMode(logger.Silent),
+		Logger:                 gormlogger.Default.LogMode(gormlogger.Silent),
 		SkipDefaultTransaction: true,
 		PrepareStmt:            true,
 	})
@@ -35,7 +36,7 @@ func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, fmt.Errorf("database ping failed: %w", err)
 	}
 
-	slog.Info("database connected", "host", cfg.Host, "port", cfg.Port, "name", cfg.Name)
+	logger.Info("database connected", zap.String("host", cfg.Host), zap.Int("port", cfg.Port), zap.String("name", cfg.Name))
 	return db, nil
 }
 

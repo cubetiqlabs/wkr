@@ -1,14 +1,13 @@
 package database
 
 import (
-	"log/slog"
-
+	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
 	"github.com/cubetiqlabs/cubis-wkr/internal/model"
 	"gorm.io/gorm"
 )
 
 func AutoMigrate(db *gorm.DB) error {
-	slog.Info("running database auto-migration")
+	logger.Info("running database auto-migration")
 	return db.AutoMigrate(
 		&model.User{},
 		&model.APIKey{},

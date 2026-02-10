@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/cubetiqlabs/cubis-wkr/internal/middleware"
@@ -35,7 +34,6 @@ func (h *WorkerHandler) Create(c fiber.Ctx) error {
 		case service.ErrWorkerExists:
 			return errResponse(c, fiber.StatusConflict, err.Error())
 		default:
-			fmt.Println("Error creating worker:", err)
 			return errResponse(c, fiber.StatusInternalServerError, "failed to create worker")
 		}
 	}

@@ -2,11 +2,12 @@ package server
 
 import (
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cubetiqlabs/cubis-wkr/internal/config"
+	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
 	"github.com/gofiber/fiber/v3"
+	"go.uber.org/zap"
 )
 
 func New(cfg config.ServerConfig, appCfg config.AppConfig) *fiber.App {
@@ -31,7 +32,7 @@ func errorHandler(c fiber.Ctx, err error) error {
 		msg = e.Message
 	}
 
-	slog.Error("request error", "status", code, "error", err.Error(), "path", c.Path())
+	logger.Error("request error", zap.Int("status", code), zap.Error(err), zap.String("path", c.Path()))
 
 	return c.Status(code).JSON(fiber.Map{
 		"success": false,
@@ -41,13 +42,13 @@ func errorHandler(c fiber.Ctx, err error) error {
 
 func Listen(app *fiber.App, cfg config.ServerConfig) error {
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	slog.Info("starting cubis-wkr server", "address", addr)
+	logger.Info("starting cubis-wkr server", zap.String("address", addr))
 	return app.Listen(addr, fiber.ListenConfig{
 		EnablePrintRoutes: true,
 	})
 }
 
 func Shutdown(app *fiber.App) error {
-	slog.Info("shutting down server", "timeout", 10*time.Second)
+	logger.Info("shutting down server", zap.Duration("timeout", 10*time.Second))
 	return app.ShutdownWithTimeout(10 * time.Second)
 }

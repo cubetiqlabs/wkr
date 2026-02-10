@@ -13,6 +13,7 @@ type Config struct {
 	Auth     AuthConfig     `mapstructure:"auth"`
 	Runtime  RuntimeConfig  `mapstructure:"runtime"`
 	Log      LogConfig      `mapstructure:"log"`
+	Sentry   SentryConfig   `mapstructure:"sentry"`
 }
 
 type AppConfig struct {
@@ -68,6 +69,14 @@ type RuntimeConfig struct {
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
+}
+
+type SentryConfig struct {
+	Enabled          bool    `mapstructure:"enabled"`
+	DSN              string  `mapstructure:"dsn"`
+	Environment      string  `mapstructure:"environment"`
+	TracesSampleRate float64 `mapstructure:"traces_sample_rate"`
+	Debug            bool    `mapstructure:"debug"`
 }
 
 func Load(path string) (*Config, error) {

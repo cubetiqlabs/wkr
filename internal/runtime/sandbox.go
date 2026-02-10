@@ -11,8 +11,6 @@ import (
 )
 
 // SandboxEngine executes workers in isolated subprocess sandboxes.
-// For production, this would use gVisor/Firecracker/Wasm. This implementation
-// provides process-level isolation as a foundation.
 type SandboxEngine struct{}
 
 func NewSandboxEngine() *SandboxEngine {
@@ -31,13 +29,8 @@ func (e *SandboxEngine) Execute(ctx context.Context, req *ExecutionRequest) (*Ex
 }
 
 func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
-	// Build the Go worker as a temporary binary and execute it.
-	// In production, this would use a pre-compiled plugin or Wasm module.
-	// For now, we use `go run` with a temp file in a sandboxed environment.
-
 	payload := buildWorkerPayload(req)
 
-	// Use Go's built-in execution with resource limits
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "go", "run", "-")
 	cmd.Stdin = bytes.NewReader([]byte(wrapGoCode(req.Code, req.EntryPoint)))
@@ -76,22 +69,19 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 }
 
 func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
-	// Execute JavaScript/TypeScript using Deno or Node.js runtime
-	// Deno is preferred for its security-first design (permissions model)
 	payload := buildWorkerPayload(req)
 
 	var stdout, stderr bytes.Buffer
 
-	// Try deno first, fall back to node
-	runtime := "deno"
+	rt := "deno"
 	args := []string{"eval", "--no-remote", wrapJSCode(req.Code, req.EntryPoint)}
 
 	if _, err := exec.LookPath("deno"); err != nil {
-		runtime = "node"
+		rt = "node"
 		args = []string{"-e", wrapJSCode(req.Code, req.EntryPoint)}
 	}
 
-	cmd := exec.CommandContext(ctx, runtime, args...)
+	cmd := exec.CommandContext(ctx, rt, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Env = buildEnv(req.EnvVars)
@@ -150,10 +140,88 @@ func wrapGoCode(code, entryPoint string) string {
 	return fmt.Sprintf(`package main
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
+	"time"
 )
+
+// --- Cubis Context Helpers ---
+
+// Env returns the value of an environment variable.
+func Env(key string) string { return os.Getenv(key) }
+
+// EnvOr returns the value of an environment variable or a default.
+func EnvOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" { return v }
+	return fallback
+}
+
+// Fetch performs an HTTP request and returns the response body as a string.
+func Fetch(rawURL string, opts ...map[string]string) (string, error) {
+	method := "GET"
+	body := ""
+	var headers map[string]string
+	if len(opts) > 0 {
+		if m, ok := opts[0]["method"]; ok { method = strings.ToUpper(m) }
+		if b, ok := opts[0]["body"]; ok { body = b }
+		headers = opts[0]
+	}
+	var reqBody io.Reader
+	if body != "" { reqBody = strings.NewReader(body) }
+	req, err := http.NewRequest(method, rawURL, reqBody)
+	if err != nil { return "", err }
+	for k, v := range headers {
+		if k != "method" && k != "body" { req.Header.Set(k, v) }
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil { return "", err }
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil { return "", err }
+	return string(data), nil
+}
+
+// Base64Encode encodes a string to base64.
+func Base64Encode(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+// Base64Decode decodes a base64 string.
+func Base64Decode(s string) (string, error) {
+	b, err := base64.StdEncoding.DecodeString(s)
+	return string(b), err
+}
+
+// SHA256Hash returns the hex-encoded SHA-256 hash of a string.
+func SHA256Hash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// MD5Hash returns the hex-encoded MD5 hash of a string.
+func MD5Hash(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// URLEncode encodes a string for use in a URL query.
+func URLEncode(s string) string { return url.QueryEscape(s) }
+
+// URLDecode decodes a URL-encoded string.
+func URLDecode(s string) (string, error) { return url.QueryUnescape(s) }
+
+// Log prints a message to stderr (captured as worker logs).
+func Log(args ...interface{}) { fmt.Fprintln(os.Stderr, args...) }
+
+// --- User Code ---
 
 %s
 
@@ -176,17 +244,113 @@ func main() {
 
 func wrapJSCode(code, entryPoint string) string {
 	return fmt.Sprintf(`
+// --- Cubis Runtime Context ---
+const __cubis = {
+  _getEnv(key) {
+    try { return Deno.env.get(key) || ""; } catch(_) {}
+    try { return process.env[key] || ""; } catch(_) {}
+    return "";
+  },
+  _write(s) {
+    try { process.stdout.write(s); return; } catch(_) {}
+    try { Deno.stdout.writeSync(new TextEncoder().encode(s)); } catch(_) {}
+  }
+};
+
+// env(key) / env(key, default)
+function env(key, fallback) {
+  const v = __cubis._getEnv(key);
+  return v || (fallback !== undefined ? fallback : "");
+}
+
+// fetch is globally available in Deno; polyfill for Node
+if (typeof globalThis.fetch === "undefined") {
+  globalThis.fetch = async (url, opts) => {
+    const http = require(url.startsWith("https") ? "https" : "http");
+    return new Promise((resolve, reject) => {
+      const req = http.request(url, {method: (opts||{}).method||"GET"}, (res) => {
+        let data = "";
+        res.on("data", c => data += c);
+        res.on("end", () => resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          text: async () => data,
+          json: async () => JSON.parse(data),
+          headers: res.headers
+        }));
+      });
+      req.on("error", reject);
+      if ((opts||{}).body) req.write(opts.body);
+      req.end();
+    });
+  };
+}
+
+// log(...args) - captured in stderr
+function log(...args) { console.error(...args); }
+
+// base64 encode/decode
+function btoa(s) {
+  try { return globalThis.btoa(s); } catch(_) { return Buffer.from(s).toString("base64"); }
+}
+function atob(s) {
+  try { return globalThis.atob(s); } catch(_) { return Buffer.from(s, "base64").toString(); }
+}
+
+// crypto helpers
+const crypto = globalThis.crypto || {};
+async function sha256(msg) {
+  if (crypto.subtle) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(msg));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
+  }
+  const c = require("crypto");
+  return c.createHash("sha256").update(msg).digest("hex");
+}
+async function md5(msg) {
+  try { const c = require("crypto"); return c.createHash("md5").update(msg).digest("hex"); }
+  catch(_) { throw new Error("md5 not available in this runtime"); }
+}
+
+// uuid v4
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random()*16|0;
+    return (c==="x"?r:(r&0x3|0x8)).toString(16);
+  });
+}
+
+// sleep(ms)
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// jsonParse / jsonStringify with error handling
+function jsonParse(s, fallback) { try { return JSON.parse(s); } catch(_) { return fallback !== undefined ? fallback : null; } }
+function jsonStringify(v, pretty) { return pretty ? JSON.stringify(v, null, 2) : JSON.stringify(v); }
+
+// urlEncode / urlDecode
+function urlEncode(s) { return encodeURIComponent(s); }
+function urlDecode(s) { return decodeURIComponent(s); }
+
+// --- User Code ---
+
 %s
 
-const payload = JSON.parse(process.env.CUBIS_PAYLOAD || Deno.env.get("CUBIS_PAYLOAD") || "{}");
-const result = %s(payload);
-const output = JSON.stringify({
-  status: 200,
-  headers: {"Content-Type": "application/json"},
-  body: typeof result === "string" ? result : JSON.stringify(result)
-});
-if (typeof process !== "undefined") { process.stdout.write(output); }
-else { Deno.stdout.writeSync(new TextEncoder().encode(output)); }
+// --- Execute ---
+(async () => {
+  const payload = jsonParse(__cubis._getEnv("CUBIS_PAYLOAD"), {});
+  let result;
+  const fn = %s;
+  result = fn(payload);
+  if (result instanceof Promise) result = await result;
+
+  const output = jsonStringify({
+    status: 200,
+    headers: {"Content-Type": "application/json"},
+    body: typeof result === "string" ? result : jsonStringify(result)
+  });
+  __cubis._write(output);
+})();
 `, code, entryPoint)
 }
 
@@ -198,7 +362,6 @@ func parseWorkerOutput(data []byte, duration time.Duration) (*ExecutionResult, e
 	}
 
 	if err := json.Unmarshal(data, &output); err != nil {
-		// If output isn't structured, return raw
 		return &ExecutionResult{
 			StatusCode: 200,
 			Headers:    map[string]string{"Content-Type": "text/plain"},

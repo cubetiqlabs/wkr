@@ -37,3 +37,10 @@ runtime:
 log:
   level: info
   format: json
+
+sentry:
+  enabled: false
+  dsn: ""
+  environment: development
+  traces_sample_rate: 0.2
+  debug: false

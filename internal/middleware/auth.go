@@ -1,12 +1,13 @@
 package middleware
 
 import (
-	"log/slog"
 	"strings"
 
+	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
 	"github.com/cubetiqlabs/cubis-wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type contextKey string
@@ -16,7 +17,6 @@ const (
 	RoleKey   contextKey = "role"
 )
 
-// Auth validates JWT tokens from the Authorization header.
 func Auth(jwtSecret []byte) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		auth := c.Get("Authorization")
@@ -53,7 +53,6 @@ func Auth(jwtSecret []byte) fiber.Handler {
 	}
 }
 
-// RequireAdmin ensures the authenticated user has admin role.
 func RequireAdmin() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		role, _ := c.Locals(string(RoleKey)).(string)
@@ -66,7 +65,6 @@ func RequireAdmin() fiber.Handler {
 	}
 }
 
-// GetUserID extracts the authenticated user ID from context.
 func GetUserID(c fiber.Ctx) (uuid.UUID, error) {
 	id, ok := c.Locals(string(UserIDKey)).(uuid.UUID)
 	if !ok {
@@ -75,21 +73,19 @@ func GetUserID(c fiber.Ctx) (uuid.UUID, error) {
 	return id, nil
 }
 
-// RequestLogger logs each request.
 func RequestLogger() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		err := c.Next()
-		slog.Info("request",
-			"method", c.Method(),
-			"path", c.Path(),
-			"status", c.Response().StatusCode(),
-			"ip", c.IP(),
+		logger.Info("request",
+			zap.String("method", c.Method()),
+			zap.String("path", c.Path()),
+			zap.Int("status", c.Response().StatusCode()),
+			zap.String("ip", c.IP()),
 		)
 		return err
 	}
 }
 
-// SecurityHeaders adds security headers to all responses.
 func SecurityHeaders() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		c.Set("X-Content-Type-Options", "nosniff")
