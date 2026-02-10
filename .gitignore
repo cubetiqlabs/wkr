@@ -1,0 +1,23 @@
+# Binaries
+bin/
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Environment
+.env
+*.env.local
+
+# Docker
+docker-compose.override.yml

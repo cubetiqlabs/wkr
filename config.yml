@@ -1,0 +1,39 @@
+app:
+  name: cubis-wkr
+  version: 0.1.0
+  env: development
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 120s
+  body_limit: 10485760 # 10MB
+
+database:
+  host: localhost
+  port: 5433
+  user: cubis
+  password: cubis_secret
+  name: cubis_wkr
+  sslmode: disable
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 1h
+  auto_migrate: true
+
+auth:
+  jwt_secret: change-me-in-production-use-env-var
+  jwt_expiry: 24h
+  api_key_header: X-API-Key
+
+runtime:
+  max_execution_time: 30s
+  max_memory_mb: 128
+  max_concurrent_workers: 100
+  sandbox_enabled: true
+
+log:
+  level: info
+  format: json
