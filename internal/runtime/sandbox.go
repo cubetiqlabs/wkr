@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -31,9 +32,22 @@ func (e *SandboxEngine) Execute(ctx context.Context, req *ExecutionRequest) (*Ex
 func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
 	payload := buildWorkerPayload(req)
 
+	// Write to temp file — `go run` doesn't support stdin
+	tmpFile, err := os.CreateTemp("", "cubis-*.go")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.WriteString(wrapGoCode(req.Code, req.EntryPoint)); err != nil {
+		tmpFile.Close()
+		return nil, fmt.Errorf("failed to write temp file: %w", err)
+	}
+	tmpFile.Close()
+
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "go", "run", "-")
-	cmd.Stdin = bytes.NewReader([]byte(wrapGoCode(req.Code, req.EntryPoint)))
+	cmd := exec.CommandContext(ctx, "go", "run", tmpPath)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Env = buildEnv(req.EnvVars)
@@ -43,14 +57,14 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 	runtime.ReadMemStats(&memBefore)
 
 	start := time.Now()
-	err := cmd.Run()
-	duration := time.Since(start)
+	err = cmd.Run()
+	goRunDuration := time.Since(start)
 
 	if ctx.Err() != nil {
 		return &ExecutionResult{
 			StatusCode: 504,
 			Body:       []byte(`{"error":"execution timed out"}`),
-			Duration:   duration,
+			Duration:   goRunDuration,
 			Error:      ErrTimeout.Error(),
 		}, ErrTimeout
 	}
@@ -59,13 +73,13 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 		return &ExecutionResult{
 			StatusCode: 500,
 			Body:       []byte(stderr.String()),
-			Duration:   duration,
+			Duration:   goRunDuration,
 			Error:      err.Error(),
 			Logs:       []string{stderr.String()},
 		}, nil
 	}
 
-	return parseWorkerOutput(stdout.Bytes(), duration)
+	return parseWorkerOutput(stdout.Bytes(), goRunDuration)
 }
 
 func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
@@ -129,7 +143,12 @@ func buildWorkerPayload(req *ExecutionRequest) []byte {
 }
 
 func buildEnv(vars map[string]string) []string {
-	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin"}
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"GOPATH=" + os.Getenv("GOPATH"),
+		"GOROOT=" + os.Getenv("GOROOT"),
+	}
 	for k, v := range vars {
 		env = append(env, k+"="+v)
 	}
