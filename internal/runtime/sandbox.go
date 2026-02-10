@@ -84,7 +84,7 @@ func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*
 
 	// Try deno first, fall back to node
 	runtime := "deno"
-	args := []string{"eval", "--no-prompt", wrapJSCode(req.Code, req.EntryPoint)}
+	args := []string{"eval", "--no-remote", wrapJSCode(req.Code, req.EntryPoint)}
 
 	if _, err := exec.LookPath("deno"); err != nil {
 		runtime = "node"

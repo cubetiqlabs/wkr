@@ -21,9 +21,14 @@ func (j *JSONMap) Scan(value interface{}) error {
 		*j = make(JSONMap)
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("failed to scan JSONMap: expected []byte, got %T", value)
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("failed to scan JSONMap: unsupported type %T", value)
 	}
 	return json.Unmarshal(bytes, j)
 }
