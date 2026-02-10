@@ -131,6 +131,8 @@ type SentryConfig struct {
 
 func Load(path string) (*Config, error) {
 	viper.SetConfigFile(path)
+	viper.SetEnvPrefix("CUBIS")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err != nil {

@@ -95,10 +95,16 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	isForwarded := c.Get("X-Cubis-Edge-Route") == "true"
 	if h.edgeRouter != nil {
 		if target := h.edgeRouter.ShouldForwardToEdge(isForwarded); target != nil {
+			logger.Info("forwarding to edge node",
+				zap.String("worker", name),
+				zap.String("target_node", target.NodeID),
+				zap.String("target_endpoint", target.Endpoint),
+			)
 			status, body, respHeaders, err := h.edgeRouter.ForwardRequest(c.Context(), target, name, c.Method(), reqBody, headers)
 			if err != nil {
-				logger.Warn("edge forward failed, executing locally",
-					zap.String("target", target.NodeID),
+				logger.Error("edge forward failed, executing locally",
+					zap.String("target_node", target.NodeID),
+					zap.String("target_endpoint", target.Endpoint),
 					zap.Error(err),
 				)
 			} else {
@@ -107,6 +113,11 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 				}
 				return c.Status(status).Send(body)
 			}
+		} else if !isForwarded {
+			logger.Debug("no edge target, executing locally",
+				zap.String("worker", name),
+				zap.String("node_id", h.nodeID),
+			)
 		}
 	}
 

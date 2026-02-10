@@ -15,11 +15,13 @@ import (
 
 // Registry manages edge node registration, heartbeats, and discovery.
 type Registry struct {
-	db     *gorm.DB
-	cfg    config.EdgeConfig
-	mu     sync.RWMutex
-	nodes  map[string]*model.EdgeNode // nodeID -> node (in-memory cache)
-	stopCh chan struct{}
+	db                 *gorm.DB
+	cfg                config.EdgeConfig
+	mu                 sync.RWMutex
+	nodes              map[string]*model.EdgeNode
+	stopCh             chan struct{}
+	pendingActive      int
+	activeFlushPending bool
 }
 
 func NewRegistry(db *gorm.DB, cfg config.EdgeConfig) *Registry {
@@ -62,6 +64,9 @@ func (r *Registry) RegisterSelf(endpoint string, maxWorkers int) error {
 
 // StartHeartbeat begins periodic heartbeat and node discovery.
 func (r *Registry) StartHeartbeat() {
+	// Populate cache immediately so edge routing works from first request
+	r.refreshNodes()
+
 	go func() {
 		ticker := time.NewTicker(r.cfg.HeartbeatInterval)
 		defer ticker.Stop()
@@ -93,9 +98,17 @@ func (r *Registry) refreshNodes() {
 		return
 	}
 	r.mu.Lock()
+	// Preserve local active count — DB may be stale due to debounced writes
+	localActive := 0
+	if n, ok := r.nodes[r.cfg.NodeID]; ok {
+		localActive = n.ActiveWorkers
+	}
 	r.nodes = make(map[string]*model.EdgeNode, len(nodes))
 	for i := range nodes {
 		r.nodes[nodes[i].NodeID] = &nodes[i]
+	}
+	if n, ok := r.nodes[r.cfg.NodeID]; ok {
+		n.ActiveWorkers = localActive
 	}
 	r.mu.Unlock()
 }
@@ -136,11 +149,27 @@ func (r *Registry) GetNodeByID(nodeID string) *model.EdgeNode {
 	return r.nodes[nodeID]
 }
 
-// UpdateActiveWorkers updates the active worker count for this node.
+// UpdateActiveWorkers updates the active worker count for this node (debounced DB write).
 func (r *Registry) UpdateActiveWorkers(count int) {
-	r.db.Model(&model.EdgeNode{}).Where("node_id = ?", r.cfg.NodeID).
-		Update("active_workers", count)
-	metrics.ActiveWorkers.WithLabelValues(r.cfg.NodeID, r.cfg.Region).Set(float64(count))
+	r.mu.Lock()
+	// Update in-memory cache immediately so local routing decisions are accurate
+	if n, ok := r.nodes[r.cfg.NodeID]; ok {
+		n.ActiveWorkers = count
+	}
+	r.pendingActive = count
+	if !r.activeFlushPending {
+		r.activeFlushPending = true
+		go func() {
+			time.Sleep(time.Second)
+			r.mu.Lock()
+			c := r.pendingActive
+			r.activeFlushPending = false
+			r.mu.Unlock()
+			r.db.Model(&model.EdgeNode{}).Where("node_id = ?", r.cfg.NodeID).
+				Update("active_workers", c)
+		}()
+	}
+	r.mu.Unlock()
 }
 
 // Shutdown marks this node as offline.
@@ -163,3 +192,6 @@ func (r *Registry) NodeID() string { return r.cfg.NodeID }
 
 // Region returns this node's region.
 func (r *Registry) Region() string { return r.cfg.Region }
+
+// Role returns this node's role (control or edge).
+func (r *Registry) Role() string { return r.cfg.Role }

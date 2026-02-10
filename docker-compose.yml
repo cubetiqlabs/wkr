@@ -2,26 +2,26 @@ services:
   # ── Control Plane ──
   app:
     build: .
+    hostname: app
     ports:
       - "8080:8080"
     environment:
       - CUBIS_CONFIG=/app/config.yml
-      - DATABASE_HOST=db
-      - DATABASE_PORT=5432
+      - CUBIS_EDGE_ADVERTISE_ADDR=http://app:8080
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── Edge Node (example) ──
+  # ── Edge Node ──
   edge-1:
     build: .
+    hostname: edge-1
     ports:
       - "8081:8080"
     environment:
       - CUBIS_CONFIG=/app/config-edge.yml
-      - DATABASE_HOST=db
-      - DATABASE_PORT=5432
+      - CUBIS_EDGE_ADVERTISE_ADDR=http://edge-1:8080
     depends_on:
       db:
         condition: service_healthy

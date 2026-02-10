@@ -15,13 +15,14 @@ import (
 )
 
 type Pool struct {
-	engine    Engine
-	semaphore chan struct{}
-	cfg       config.RuntimeConfig
-	active    atomic.Int64
-	validator *security.Validator
-	nodeID    string
-	region    string
+	engine         Engine
+	semaphore      chan struct{}
+	cfg            config.RuntimeConfig
+	active         atomic.Int64
+	validator      *security.Validator
+	nodeID         string
+	region         string
+	onActiveChange func(int) // callback to push active count to registry
 }
 
 func NewPool(engine Engine, cfg config.RuntimeConfig, validator *security.Validator, nodeID, region string) *Pool {
@@ -34,6 +35,11 @@ func NewPool(engine Engine, cfg config.RuntimeConfig, validator *security.Valida
 		nodeID:    nodeID,
 		region:    region,
 	}
+}
+
+// SetActiveCallback sets a function called whenever the active worker count changes.
+func (p *Pool) SetActiveCallback(fn func(int)) {
+	p.onActiveChange = fn
 }
 
 func (p *Pool) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
@@ -64,11 +70,19 @@ func (p *Pool) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionRe
 	metrics.PoolQueueWait.WithLabelValues(p.nodeID).Observe(time.Since(waitStart).Seconds())
 
 	p.active.Add(1)
+	currentActive := int(p.active.Load())
+	metrics.ActiveWorkers.WithLabelValues(p.nodeID, p.region).Set(float64(currentActive))
+	if p.onActiveChange != nil {
+		p.onActiveChange(currentActive)
+	}
 	defer func() {
 		p.active.Add(-1)
-		metrics.ActiveWorkers.WithLabelValues(p.nodeID, p.region).Set(float64(p.active.Load()))
+		cur := int(p.active.Load())
+		metrics.ActiveWorkers.WithLabelValues(p.nodeID, p.region).Set(float64(cur))
+		if p.onActiveChange != nil {
+			p.onActiveChange(cur)
+		}
 	}()
-	metrics.ActiveWorkers.WithLabelValues(p.nodeID, p.region).Set(float64(p.active.Load()))
 
 	timeout := p.cfg.MaxExecutionTime
 	if timeout == 0 {

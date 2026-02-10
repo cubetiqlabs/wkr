@@ -55,29 +55,59 @@ func (r *Router) SelectNode(preferredRegion string) *model.EdgeNode {
 
 // ShouldForwardToEdge returns a remote node if this request should be forwarded,
 // or nil if it should be executed locally. Skips self and already-forwarded requests.
+// A control-plane node always prefers edge nodes for execution.
 func (r *Router) ShouldForwardToEdge(isAlreadyForwarded bool) *model.EdgeNode {
 	if isAlreadyForwarded {
-		return nil // prevent forwarding loops
+		return nil
 	}
 
 	self := r.registry.NodeID()
+	isControl := r.registry.Role() == "control"
 	nodes := r.registry.GetHealthyNodes("")
-	if len(nodes) <= 1 {
-		return nil // only this node, execute locally
+
+	// Collect remote edge nodes
+	var candidates []*model.EdgeNode
+	for _, n := range nodes {
+		if n.NodeID != self {
+			candidates = append(candidates, n)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil // no remote nodes, must execute locally
 	}
 
-	// Find least-loaded node; if it's us, execute locally
-	sort.Slice(nodes, func(i, j int) bool {
-		loadI := float64(nodes[i].ActiveWorkers) / float64(max(nodes[i].MaxWorkers, 1))
-		loadJ := float64(nodes[j].ActiveWorkers) / float64(max(nodes[j].MaxWorkers, 1))
+	// Sort by load ratio (least loaded first)
+	sort.Slice(candidates, func(i, j int) bool {
+		loadI := float64(candidates[i].ActiveWorkers) / float64(max(candidates[i].MaxWorkers, 1))
+		loadJ := float64(candidates[j].ActiveWorkers) / float64(max(candidates[j].MaxWorkers, 1))
 		return loadI < loadJ
 	})
 
-	best := nodes[0]
-	if best.NodeID == self {
+	best := candidates[0]
+
+	// Control plane always delegates to edge nodes
+	if isControl {
+		return best
+	}
+
+	// Edge nodes only forward if remote is strictly less loaded than self
+	var selfNode *model.EdgeNode
+	for _, n := range nodes {
+		if n.NodeID == self {
+			selfNode = n
+			break
+		}
+	}
+	if selfNode == nil {
 		return nil
 	}
-	return best
+
+	selfLoad := float64(selfNode.ActiveWorkers) / float64(max(selfNode.MaxWorkers, 1))
+	bestLoad := float64(best.ActiveWorkers) / float64(max(best.MaxWorkers, 1))
+	if bestLoad < selfLoad {
+		return best
+	}
+	return nil
 }
 
 // ForwardRequest proxies an invocation to a remote edge node.

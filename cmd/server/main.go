@@ -90,10 +90,29 @@ func main() {
 	registry := edge.NewRegistry(db, cfg.Edge)
 	edgeRouter := edge.NewRouter(registry, cfg.Edge.InternalSecret)
 
+	// Wire pool → registry so active worker count is visible to other nodes
+	pool.SetActiveCallback(func(count int) {
+		registry.UpdateActiveWorkers(count)
+	})
+
 	endpoint := cfg.Edge.AdvertiseAddr
 	if endpoint == "" {
-		endpoint = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+		host := cfg.Server.Host
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			// Resolve actual hostname so other nodes can reach us
+			if h, err := os.Hostname(); err == nil && h != "" {
+				host = h
+			} else {
+				host = "127.0.0.1"
+			}
+		}
+		endpoint = fmt.Sprintf("http://%s:%d", host, cfg.Server.Port)
 	}
+	logger.Info("registering edge node",
+		zap.String("node_id", cfg.Edge.NodeID),
+		zap.String("role", cfg.Edge.Role),
+		zap.String("endpoint", endpoint),
+	)
 	if err := registry.RegisterSelf(endpoint, cfg.Runtime.MaxConcurrentWorkers); err != nil {
 		logger.Error("edge registration failed", zap.Error(err))
 	}

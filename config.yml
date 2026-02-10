@@ -43,6 +43,7 @@ edge:
   region: default
   role: control
   control_url: ""
+  advertise_addr: ""                               # set in production, e.g. http://10.0.1.5:8080
   internal_secret: change-me-internal-secret       # shared secret for inter-node auth
   sync_interval: 30s
   heartbeat_interval: 10s
