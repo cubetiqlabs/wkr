@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // User represents a platform user.
@@ -25,13 +26,20 @@ const (
 
 // APIKey provides programmatic access.
 type APIKey struct {
-	ID        uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ID        uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
 	UserID    uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
 	User      *User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Name      string     `gorm:"size:255;not null" json:"name"`
 	KeyHash   string     `gorm:"uniqueIndex;size:64;not null" json:"-"`
-	Prefix    string     `gorm:"size:10;not null" json:"prefix"` // first 8 chars for identification
+	Prefix    string     `gorm:"size:10;not null" json:"prefix"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	LastUsed  *time.Time `json:"last_used,omitempty"`
 	CreatedAt time.Time  `gorm:"autoCreateTime" json:"created_at"`
+}
+
+func (a *APIKey) BeforeCreate(tx *gorm.DB) error {
+	if a.ID == uuid.Nil {
+		a.ID = uuid.Must(uuid.NewV7())
+	}
+	return nil
 }

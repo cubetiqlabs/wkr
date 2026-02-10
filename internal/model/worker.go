@@ -9,10 +9,17 @@ import (
 
 // Base provides common fields for all models.
 type Base struct {
-	ID        uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ID        uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
 	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (b *Base) BeforeCreate(tx *gorm.DB) error {
+	if b.ID == uuid.Nil {
+		b.ID = uuid.Must(uuid.NewV7())
+	}
+	return nil
 }
 
 // Worker represents a serverless function deployment.
@@ -70,14 +77,21 @@ const (
 
 // Invocation logs each worker execution.
 type Invocation struct {
-	ID            uuid.UUID     `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ID            uuid.UUID     `gorm:"type:uuid;primaryKey" json:"id"`
 	WorkerID      uuid.UUID     `gorm:"type:uuid;not null;index" json:"worker_id"`
 	OwnerID       uuid.UUID     `gorm:"type:uuid;not null;index" json:"owner_id"`
 	Duration      time.Duration `json:"duration"`
 	StatusCode    int           `json:"status_code"`
-	MemoryUsed    int           `json:"memory_used"`     // bytes
-	RequestBytes  int64         `json:"request_bytes"`   // inbound payload size
-	ResponseBytes int64         `json:"response_bytes"`  // outbound body size
+	MemoryUsed    int           `json:"memory_used"`
+	RequestBytes  int64         `json:"request_bytes"`
+	ResponseBytes int64         `json:"response_bytes"`
 	Error         string        `gorm:"type:text" json:"error,omitempty"`
 	CreatedAt     time.Time     `gorm:"autoCreateTime;index" json:"created_at"`
+}
+
+func (i *Invocation) BeforeCreate(tx *gorm.DB) error {
+	if i.ID == uuid.Nil {
+		i.ID = uuid.Must(uuid.NewV7())
+	}
+	return nil
 }

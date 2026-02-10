@@ -54,9 +54,10 @@ func (r *QuotaRepository) IncrementUsage(ctx context.Context, userID uuid.UUID, 
 	}
 
 	// Upsert: create row if not exists, otherwise increment
+	id := uuid.Must(uuid.NewV7())
 	return r.db.WithContext(ctx).Exec(`
 		INSERT INTO usage_metrics (id, user_id, date, request_count, total_exec_time, total_bandwidth, error_count, updated_at)
-		VALUES (gen_random_uuid(), ?, ?, 1, ?, ?, ?, NOW())
+		VALUES (?, ?, ?, 1, ?, ?, ?, NOW())
 		ON CONFLICT (user_id, date)
 		DO UPDATE SET
 			request_count = usage_metrics.request_count + 1,
@@ -64,7 +65,7 @@ func (r *QuotaRepository) IncrementUsage(ctx context.Context, userID uuid.UUID, 
 			total_bandwidth = usage_metrics.total_bandwidth + EXCLUDED.total_bandwidth,
 			error_count = usage_metrics.error_count + EXCLUDED.error_count,
 			updated_at = NOW()
-	`, userID, today, execTimeMs, requestBytes+responseBytes, errorInc).Error
+	`, id, userID, today, execTimeMs, requestBytes+responseBytes, errorInc).Error
 }
 
 func (r *QuotaRepository) GetUsageRange(ctx context.Context, userID uuid.UUID, from, to time.Time) ([]model.UsageMetrics, error) {
