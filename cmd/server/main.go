@@ -90,7 +90,10 @@ func main() {
 	registry := edge.NewRegistry(db, cfg.Edge)
 	edgeRouter := edge.NewRouter(registry, cfg.Edge.InternalSecret)
 
-	endpoint := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	endpoint := cfg.Edge.AdvertiseAddr
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	}
 	if err := registry.RegisterSelf(endpoint, cfg.Runtime.MaxConcurrentWorkers); err != nil {
 		logger.Error("edge registration failed", zap.Error(err))
 	}
@@ -99,10 +102,10 @@ func main() {
 	// Handlers
 	authHandler := handler.NewAuthHandler(authService)
 	workerHandler := handler.NewWorkerHandler(workerService, quotaService)
-	invokeHandler := handler.NewInvokeHandler(workerService, quotaService, pool, auditor, cfg.Edge.NodeID)
+	invokeHandler := handler.NewInvokeHandler(workerService, quotaService, pool, auditor, edgeRouter, cfg.Edge.NodeID)
 	healthHandler := handler.NewHealthHandler(db, pool, registry)
 	quotaHandler := handler.NewQuotaHandler(quotaService)
-	edgeHandler := handler.NewEdgeHandler(registry, edgeRouter)
+	edgeHandler := handler.NewEdgeHandler(registry, edgeRouter, workerService)
 
 	// Server
 	app := server.New(cfg.Server, cfg.App)

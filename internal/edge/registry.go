@@ -9,7 +9,6 @@ import (
 	"github.com/cubetiqlabs/wkr/internal/logger"
 	"github.com/cubetiqlabs/wkr/internal/metrics"
 	"github.com/cubetiqlabs/wkr/internal/model"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -164,6 +163,3 @@ func (r *Registry) NodeID() string { return r.cfg.NodeID }
 
 // Region returns this node's region.
 func (r *Registry) Region() string { return r.cfg.Region }
-
-// Placeholder for future: used by invoke handler to check if we should route to another node
-func (r *Registry) ShouldRouteToEdge(_ uuid.UUID) *model.EdgeNode { return nil }

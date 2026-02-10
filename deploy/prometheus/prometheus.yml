@@ -10,10 +10,9 @@ scrape_configs:
           service: "cubis-wkr"
     metrics_path: /metrics
 
-  # Add more edge nodes here:
-  # - job_name: "cubis-edge-us-east"
-  #   static_configs:
-  #     - targets: ["edge-us-east:8080"]
-  #       labels:
-  #         service: "cubis-wkr"
-  #         region: "us-east-1"
+  - job_name: "cubis-edge-us-east"
+    static_configs:
+      - targets: ["edge-1:8080"]
+        labels:
+          service: "cubis-wkr"
+          region: "us-east-1"

@@ -91,7 +91,8 @@ type EdgeConfig struct {
 	Region            string        `mapstructure:"region"`
 	Role              string        `mapstructure:"role"`
 	ControlURL        string        `mapstructure:"control_url"`
-	InternalSecret    string        `mapstructure:"internal_secret"` // shared secret for inter-node auth
+	AdvertiseAddr     string        `mapstructure:"advertise_addr"` // reachable address for other nodes, e.g. "http://10.0.1.5:8080"
+	InternalSecret    string        `mapstructure:"internal_secret"`
 	SyncInterval      time.Duration `mapstructure:"sync_interval"`
 	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"`
 	FailoverTimeout   time.Duration `mapstructure:"failover_timeout"`

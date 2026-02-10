@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cubetiqlabs/wkr/internal/edge"
 	"github.com/cubetiqlabs/wkr/internal/logger"
 	"github.com/cubetiqlabs/wkr/internal/metrics"
 	"github.com/cubetiqlabs/wkr/internal/model"
@@ -21,6 +22,7 @@ type InvokeHandler struct {
 	quotaService  *service.QuotaService
 	pool          *runtime.Pool
 	auditor       *security.Auditor
+	edgeRouter    *edge.Router
 	nodeID        string
 }
 
@@ -29,6 +31,7 @@ func NewInvokeHandler(
 	quotaService *service.QuotaService,
 	pool *runtime.Pool,
 	auditor *security.Auditor,
+	edgeRouter *edge.Router,
 	nodeID string,
 ) *InvokeHandler {
 	return &InvokeHandler{
@@ -36,6 +39,7 @@ func NewInvokeHandler(
 		quotaService:  quotaService,
 		pool:          pool,
 		auditor:       auditor,
+		edgeRouter:    edgeRouter,
 		nodeID:        nodeID,
 	}
 }
@@ -86,6 +90,26 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	})
 
 	reqBody := c.Body()
+
+	// Edge routing: forward to a less-loaded node if available
+	isForwarded := c.Get("X-Cubis-Edge-Route") == "true"
+	if h.edgeRouter != nil {
+		if target := h.edgeRouter.ShouldForwardToEdge(isForwarded); target != nil {
+			status, body, respHeaders, err := h.edgeRouter.ForwardRequest(c.Context(), target, name, c.Method(), reqBody, headers)
+			if err != nil {
+				logger.Warn("edge forward failed, executing locally",
+					zap.String("target", target.NodeID),
+					zap.Error(err),
+				)
+			} else {
+				for k, v := range respHeaders {
+					c.Set(k, v)
+				}
+				return c.Status(status).Send(body)
+			}
+		}
+	}
+
 	requestBytes := int64(len(reqBody))
 
 	req := &runtime.ExecutionRequest{
