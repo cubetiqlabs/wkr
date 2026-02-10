@@ -1,0 +1,6 @@
+{
+  "name": "go-hash-service",
+  "runtime": "go",
+  "entry_point": "handler",
+  "code": "func handler(req map[string]interface{}) map[string]interface{} {\n\tbodyStr, _ := req[\"body\"].(string)\n\tvar body map[string]interface{}\n\tjson.Unmarshal([]byte(bodyStr), &body)\n\n\tinput, _ := body[\"input\"].(string)\n\tif input == \"\" {\n\t\treturn map[string]interface{}{\"error\": \"input field required\"}\n\t}\n\n\treturn map[string]interface{}{\n\t\t\"input\":         input,\n\t\t\"sha256\":        SHA256Hash(input),\n\t\t\"md5\":           MD5Hash(input),\n\t\t\"base64\":        Base64Encode(input),\n\t\t\"url_encoded\":   URLEncode(input),\n\t\t\"length\":        len(input),\n\t\t\"byte_length\":   len([]byte(input)),\n\t}\n}"
+}

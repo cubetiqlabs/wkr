@@ -1,0 +1,6 @@
+{
+  "name": "go-hello-world",
+  "runtime": "go",
+  "entry_point": "handler",
+  "code": "func handler(req map[string]interface{}) map[string]interface{} {\n\treturn map[string]interface{}{\n\t\t\"message\":   \"Hello from Cubis Workers (Go)!\",\n\t\t\"method\":    req[\"method\"],\n\t\t\"timestamp\": time.Now().UTC().Format(time.RFC3339),\n\t\t\"runtime\":   \"go\",\n\t}\n}"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "go-fetch-aggregator",
+  "runtime": "go",
+  "entry_point": "handler",
+  "code": "func handler(req map[string]interface{}) map[string]interface{} {\n\turls := []string{\n\t\t\"https://jsonplaceholder.typicode.com/posts/1\",\n\t\t\"https://jsonplaceholder.typicode.com/users/1\",\n\t\t\"https://jsonplaceholder.typicode.com/todos/1\",\n\t}\n\n\tresults := make([]map[string]interface{}, 0, len(urls))\n\tfor _, u := range urls {\n\t\tstart := time.Now()\n\t\tbody, err := Fetch(u)\n\t\tduration := time.Since(start)\n\n\t\tentry := map[string]interface{}{\n\t\t\t\"url\":        u,\n\t\t\t\"latency_ms\": duration.Milliseconds(),\n\t\t}\n\n\t\tif err != nil {\n\t\t\tentry[\"error\"] = err.Error()\n\t\t} else {\n\t\t\tvar data interface{}\n\t\t\tjson.Unmarshal([]byte(body), &data)\n\t\t\tentry[\"data\"] = data\n\t\t}\n\t\tresults = append(results, entry)\n\t}\n\n\treturn map[string]interface{}{\n\t\t\"aggregated_at\": time.Now().UTC().Format(time.RFC3339),\n\t\t\"sources\":       len(results),\n\t\t\"results\":       results,\n\t}\n}"
+}

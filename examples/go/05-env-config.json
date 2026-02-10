@@ -1,0 +1,14 @@
+{
+  "name": "go-env-config",
+  "runtime": "go",
+  "entry_point": "handler",
+  "env_vars": {
+    "APP_NAME": "my-service",
+    "APP_VERSION": "2.1.0",
+    "APP_REGION": "us-east-1",
+    "FEATURE_DARK_MODE": "true",
+    "FEATURE_BETA_API": "false",
+    "MAX_RETRIES": "3"
+  },
+  "code": "func handler(req map[string]interface{}) map[string]interface{} {\n\t// Demonstrate environment-based configuration\n\tconfig := map[string]interface{}{\n\t\t\"app\": map[string]string{\n\t\t\t\"name\":    EnvOr(\"APP_NAME\", \"default-app\"),\n\t\t\t\"version\": EnvOr(\"APP_VERSION\", \"0.0.0\"),\n\t\t\t\"region\":  EnvOr(\"APP_REGION\", \"local\"),\n\t\t},\n\t\t\"features\": map[string]bool{\n\t\t\t\"dark_mode\": Env(\"FEATURE_DARK_MODE\") == \"true\",\n\t\t\t\"beta_api\":  Env(\"FEATURE_BETA_API\") == \"true\",\n\t\t},\n\t\t\"limits\": map[string]string{\n\t\t\t\"max_retries\": EnvOr(\"MAX_RETRIES\", \"5\"),\n\t\t},\n\t}\n\n\tLog(\"config loaded for\", EnvOr(\"APP_NAME\", \"unknown\"))\n\n\treturn map[string]interface{}{\n\t\t\"config\":    config,\n\t\t\"loaded_at\": time.Now().UTC().Format(time.RFC3339),\n\t}\n}"
+}

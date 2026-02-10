@@ -1,0 +1,6 @@
+{
+  "name": "hello-world",
+  "runtime": "javascript",
+  "entry_point": "main",
+  "code": "function main(req) {\n  return {\n    message: \"Hello from Cubis Workers!\",\n    method: req.method,\n    timestamp: new Date().toISOString()\n  };\n}"
+}

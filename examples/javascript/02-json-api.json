@@ -1,0 +1,6 @@
+{
+  "name": "json-api",
+  "runtime": "javascript",
+  "entry_point": "main",
+  "code": "function main(req) {\n  const body = jsonParse(req.body, {});\n  const action = body.action || 'list';\n\n  const db = [\n    { id: 1, name: 'Alice', role: 'admin' },\n    { id: 2, name: 'Bob', role: 'user' },\n    { id: 3, name: 'Charlie', role: 'user' }\n  ];\n\n  switch (action) {\n    case 'list':\n      return { users: db, total: db.length };\n\n    case 'get': {\n      const user = db.find(u => u.id === body.id);\n      if (!user) return { error: 'user not found' };\n      return { user };\n    }\n\n    case 'search': {\n      const q = (body.query || '').toLowerCase();\n      const results = db.filter(u => u.name.toLowerCase().includes(q));\n      return { results, count: results.length };\n    }\n\n    default:\n      return { error: 'unknown action', available: ['list', 'get', 'search'] };\n  }\n}"
+}

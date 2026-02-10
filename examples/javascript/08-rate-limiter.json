@@ -1,0 +1,10 @@
+{
+  "name": "rate-limiter",
+  "runtime": "javascript",
+  "entry_point": "main",
+  "env_vars": {
+    "RATE_LIMIT": "10",
+    "RATE_WINDOW_SEC": "60"
+  },
+  "code": "const store = {};\n\nfunction main(req) {\n  const limit = parseInt(env('RATE_LIMIT', '10'));\n  const windowSec = parseInt(env('RATE_WINDOW_SEC', '60'));\n  const clientIP = (req.headers || {})['X-Forwarded-For'] || (req.headers || {})['x-forwarded-for'] || 'unknown';\n  const now = Math.floor(Date.now() / 1000);\n  const windowKey = `${clientIP}:${Math.floor(now / windowSec)}`;\n\n  if (!store[windowKey]) {\n    store[windowKey] = { count: 0, reset: (Math.floor(now / windowSec) + 1) * windowSec };\n    // Cleanup old windows\n    for (const k of Object.keys(store)) {\n      if (store[k].reset < now) delete store[k];\n    }\n  }\n\n  store[windowKey].count++;\n  const remaining = Math.max(0, limit - store[windowKey].count);\n  const resetAt = store[windowKey].reset;\n\n  const headers = {\n    'X-RateLimit-Limit': String(limit),\n    'X-RateLimit-Remaining': String(remaining),\n    'X-RateLimit-Reset': String(resetAt)\n  };\n\n  if (store[windowKey].count > limit) {\n    return {\n      status: 429,\n      headers: { ...headers, 'Retry-After': String(resetAt - now) },\n      body: jsonStringify({ error: 'rate limit exceeded', retry_after: resetAt - now })\n    };\n  }\n\n  // Forward to actual logic\n  const body = jsonParse(req.body, {});\n  return {\n    status: 200,\n    headers,\n    body: jsonStringify({\n      message: 'request allowed',\n      client: clientIP,\n      remaining,\n      data: body\n    })\n  };\n}"
+}

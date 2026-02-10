@@ -1,0 +1,6 @@
+{
+  "name": "form-handler",
+  "runtime": "javascript",
+  "entry_point": "main",
+  "code": "function main(req) {\n  if (req.method !== 'POST') {\n    return { error: 'POST required', status: 405 };\n  }\n\n  const body = jsonParse(req.body, {});\n\n  // Validate required fields\n  const errors = [];\n  if (!body.name || body.name.trim().length < 2) errors.push('name is required (min 2 chars)');\n  if (!body.email || !/^[^@]+@[^@]+\\.[^@]+$/.test(body.email)) errors.push('valid email is required');\n  if (!body.message || body.message.trim().length < 10) errors.push('message is required (min 10 chars)');\n\n  if (errors.length > 0) {\n    return { success: false, errors };\n  }\n\n  // Sanitize input\n  const sanitized = {\n    name: body.name.trim().substring(0, 100),\n    email: body.email.trim().toLowerCase().substring(0, 255),\n    message: body.message.trim().substring(0, 2000),\n    submitted_at: new Date().toISOString(),\n    id: uuid()\n  };\n\n  log('form submission:', sanitized.id, sanitized.email);\n\n  return {\n    success: true,\n    submission: sanitized,\n    message: 'Thank you for your submission'\n  };\n}"
+}

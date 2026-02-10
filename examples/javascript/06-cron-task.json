@@ -1,0 +1,10 @@
+{
+  "name": "cron-task",
+  "runtime": "javascript",
+  "entry_point": "main",
+  "env_vars": {
+    "SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/T00/B00/xxx",
+    "HEALTH_CHECK_URLS": "https://example.com,https://api.example.com/health"
+  },
+  "code": "async function main(req) {\n  const urls = env('HEALTH_CHECK_URLS', 'https://example.com').split(',');\n  const results = [];\n\n  for (const url of urls) {\n    const trimmed = url.trim();\n    const start = Date.now();\n    try {\n      const resp = await fetch(trimmed);\n      results.push({\n        url: trimmed,\n        status: resp.status,\n        ok: resp.ok,\n        latency_ms: Date.now() - start\n      });\n    } catch (err) {\n      results.push({\n        url: trimmed,\n        status: 0,\n        ok: false,\n        error: err.message,\n        latency_ms: Date.now() - start\n      });\n    }\n  }\n\n  const failures = results.filter(r => !r.ok);\n  const summary = {\n    checked_at: new Date().toISOString(),\n    total: results.length,\n    healthy: results.length - failures.length,\n    unhealthy: failures.length,\n    results\n  };\n\n  // Alert on failures\n  if (failures.length > 0) {\n    log('ALERT: unhealthy services detected:', JSON.stringify(failures));\n    const slackUrl = env('SLACK_WEBHOOK_URL');\n    if (slackUrl) {\n      const msg = `🚨 ${failures.length} service(s) down: ${failures.map(f => f.url).join(', ')}`;\n      try {\n        await fetch(slackUrl, {\n          method: 'POST',\n          body: JSON.stringify({ text: msg }),\n          headers: { 'Content-Type': 'application/json' }\n        });\n      } catch (_) {}\n    }\n  }\n\n  return summary;\n}"
+}

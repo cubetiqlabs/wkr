@@ -1,0 +1,9 @@
+{
+  "name": "auth-webhook",
+  "runtime": "javascript",
+  "entry_point": "main",
+  "env_vars": {
+    "WEBHOOK_SECRET": "whsec_test_secret_key_123"
+  },
+  "code": "async function main(req) {\n  const secret = env('WEBHOOK_SECRET');\n  if (!secret) return { error: 'WEBHOOK_SECRET not configured', status: 500 };\n\n  const signature = (req.headers || {})['X-Signature'] || (req.headers || {})['x-signature'] || '';\n  const body = req.body || '';\n\n  // Verify HMAC signature\n  const expectedSig = await sha256(secret + ':' + body);\n\n  if (!signature) {\n    log('webhook received without signature');\n    return { error: 'missing signature header', status: 401 };\n  }\n\n  if (signature !== expectedSig) {\n    log('webhook signature mismatch');\n    return { error: 'invalid signature', status: 403 };\n  }\n\n  // Process the verified webhook payload\n  const payload = jsonParse(body, {});\n  const event = payload.event || 'unknown';\n\n  log('verified webhook event:', event);\n\n  switch (event) {\n    case 'user.created':\n      return { processed: true, event, action: 'send_welcome_email', user: payload.data };\n    case 'payment.completed':\n      return { processed: true, event, action: 'fulfill_order', order: payload.data };\n    case 'subscription.cancelled':\n      return { processed: true, event, action: 'schedule_offboarding', account: payload.data };\n    default:\n      return { processed: false, event, message: 'unhandled event type' };\n  }\n}"
+}

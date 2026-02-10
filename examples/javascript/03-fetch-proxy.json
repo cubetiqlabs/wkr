@@ -1,0 +1,9 @@
+{
+  "name": "fetch-proxy",
+  "runtime": "javascript",
+  "entry_point": "main",
+  "env_vars": {
+    "UPSTREAM_URL": "https://jsonplaceholder.typicode.com"
+  },
+  "code": "async function main(req) {\n  const baseUrl = env('UPSTREAM_URL', 'https://jsonplaceholder.typicode.com');\n  const body = jsonParse(req.body, {});\n  const resource = body.resource || 'posts';\n  const id = body.id || '';\n\n  const url = id ? `${baseUrl}/${resource}/${id}` : `${baseUrl}/${resource}?_limit=5`;\n  log('fetching:', url);\n\n  try {\n    const resp = await fetch(url);\n    const data = await resp.json();\n    return {\n      source: url,\n      status: resp.status,\n      data: data\n    };\n  } catch (err) {\n    return { error: err.message, url };\n  }\n}"
+}
