@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cubetiqlabs/cubis-wkr/internal/config"
-	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/config"
+	"github.com/cubetiqlabs/wkr/internal/logger"
 	"go.uber.org/zap"
 )
 

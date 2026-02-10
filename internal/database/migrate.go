@@ -1,8 +1,8 @@
 package database
 
 import (
-	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
-	"github.com/cubetiqlabs/cubis-wkr/internal/model"
+	"github.com/cubetiqlabs/wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/model"
 	"gorm.io/gorm"
 )
 

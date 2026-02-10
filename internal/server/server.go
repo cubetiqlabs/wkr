@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cubetiqlabs/cubis-wkr/internal/config"
-	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/config"
+	"github.com/cubetiqlabs/wkr/internal/logger"
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 )
@@ -42,7 +42,7 @@ func errorHandler(c fiber.Ctx, err error) error {
 
 func Listen(app *fiber.App, cfg config.ServerConfig) error {
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	logger.Info("starting cubis-wkr server", zap.String("address", addr))
+	logger.Info("starting wkr server", zap.String("address", addr))
 	return app.Listen(addr, fiber.ListenConfig{
 		EnablePrintRoutes: true,
 	})

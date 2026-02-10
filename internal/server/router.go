@@ -3,8 +3,8 @@ package server
 import (
 	"time"
 
-	"github.com/cubetiqlabs/cubis-wkr/internal/handler"
-	"github.com/cubetiqlabs/cubis-wkr/internal/middleware"
+	"github.com/cubetiqlabs/wkr/internal/handler"
+	"github.com/cubetiqlabs/wkr/internal/middleware"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/recover"

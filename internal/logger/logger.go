@@ -1,7 +1,7 @@
 package logger
 
 import (
-	"github.com/cubetiqlabs/cubis-wkr/internal/config"
+	"github.com/cubetiqlabs/wkr/internal/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

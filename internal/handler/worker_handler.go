@@ -3,8 +3,8 @@ package handler
 import (
 	"strconv"
 
-	"github.com/cubetiqlabs/cubis-wkr/internal/middleware"
-	"github.com/cubetiqlabs/cubis-wkr/internal/service"
+	"github.com/cubetiqlabs/wkr/internal/middleware"
+	"github.com/cubetiqlabs/wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 )

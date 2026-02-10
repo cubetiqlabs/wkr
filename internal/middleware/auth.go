@@ -3,8 +3,8 @@ package middleware
 import (
 	"strings"
 
-	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
-	"github.com/cubetiqlabs/cubis-wkr/internal/service"
+	"github.com/cubetiqlabs/wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"go.uber.org/zap"

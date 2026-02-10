@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"github.com/cubetiqlabs/cubis-wkr/internal/service"
+	"github.com/cubetiqlabs/wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 )
 

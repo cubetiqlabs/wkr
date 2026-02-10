@@ -6,15 +6,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/cubetiqlabs/cubis-wkr/internal/config"
-	"github.com/cubetiqlabs/cubis-wkr/internal/database"
-	"github.com/cubetiqlabs/cubis-wkr/internal/handler"
-	"github.com/cubetiqlabs/cubis-wkr/internal/logger"
-	"github.com/cubetiqlabs/cubis-wkr/internal/repository"
-	"github.com/cubetiqlabs/cubis-wkr/internal/runtime"
-	cubissentry "github.com/cubetiqlabs/cubis-wkr/internal/sentry"
-	"github.com/cubetiqlabs/cubis-wkr/internal/server"
-	"github.com/cubetiqlabs/cubis-wkr/internal/service"
+	"github.com/cubetiqlabs/wkr/internal/config"
+	"github.com/cubetiqlabs/wkr/internal/database"
+	"github.com/cubetiqlabs/wkr/internal/handler"
+	"github.com/cubetiqlabs/wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/repository"
+	"github.com/cubetiqlabs/wkr/internal/runtime"
+	cubissentry "github.com/cubetiqlabs/wkr/internal/sentry"
+	"github.com/cubetiqlabs/wkr/internal/server"
+	"github.com/cubetiqlabs/wkr/internal/service"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +35,7 @@ func main() {
 	}
 	defer logger.Sync()
 
-	logger.Info("starting cubis-wkr",
+	logger.Info("starting wkr",
 		zap.String("name", cfg.App.Name),
 		zap.String("version", cfg.App.Version),
 		zap.String("env", cfg.App.Env),
@@ -106,5 +106,5 @@ func main() {
 		logger.Error("server shutdown error", zap.Error(err))
 	}
 
-	logger.Info("cubis-wkr stopped")
+	logger.Info("wkr stopped")
 }

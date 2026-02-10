@@ -1,4 +1,4 @@
-# Cubis Workers (cubis-wkr)
+# Cubis Workers (wkr)
 
 A high-performance, security-first serverless platform supporting **Go** and **JavaScript/TypeScript** runtimes.
 

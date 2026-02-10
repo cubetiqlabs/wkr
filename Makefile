@@ -1,6 +1,6 @@
 .PHONY: build run dev clean test lint
 
-APP_NAME := cubis-wkr
+APP_NAME := wkr
 BUILD_DIR := ./bin
 
 build:

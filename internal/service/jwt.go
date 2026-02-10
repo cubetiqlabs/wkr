@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cubetiqlabs/cubis-wkr/internal/model"
+	"github.com/cubetiqlabs/wkr/internal/model"
 	"github.com/google/uuid"
 )
 

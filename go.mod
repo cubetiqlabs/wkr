@@ -1,4 +1,4 @@
-module github.com/cubetiqlabs/cubis-wkr
+module github.com/cubetiqlabs/wkr
 
 go 1.25.4
 

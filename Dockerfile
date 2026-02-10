@@ -5,16 +5,16 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /cubis-wkr ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /wkr ./cmd/server
 
 # Runtime stage
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata deno
 RUN addgroup -S cubis && adduser -S cubis -G cubis
 WORKDIR /app
-COPY --from=builder /cubis-wkr .
+COPY --from=builder /wkr .
 COPY config.yml .
 RUN chown -R cubis:cubis /app
 USER cubis
 EXPOSE 8080
-ENTRYPOINT ["./cubis-wkr"]
+ENTRYPOINT ["./wkr"]
