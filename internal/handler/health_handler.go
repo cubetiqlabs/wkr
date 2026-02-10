@@ -2,18 +2,20 @@ package handler
 
 import (
 	"github.com/cubetiqlabs/wkr/internal/database"
+	"github.com/cubetiqlabs/wkr/internal/edge"
 	"github.com/cubetiqlabs/wkr/internal/runtime"
 	"github.com/gofiber/fiber/v3"
 	"gorm.io/gorm"
 )
 
 type HealthHandler struct {
-	db   *gorm.DB
-	pool *runtime.Pool
+	db       *gorm.DB
+	pool     *runtime.Pool
+	registry *edge.Registry
 }
 
-func NewHealthHandler(db *gorm.DB, pool *runtime.Pool) *HealthHandler {
-	return &HealthHandler{db: db, pool: pool}
+func NewHealthHandler(db *gorm.DB, pool *runtime.Pool, registry *edge.Registry) *HealthHandler {
+	return &HealthHandler{db: db, pool: pool, registry: registry}
 }
 
 func (h *HealthHandler) Health(c fiber.Ctx) error {
@@ -23,11 +25,18 @@ func (h *HealthHandler) Health(c fiber.Ctx) error {
 		dbStatus = "down"
 	}
 
-	return ok(c, fiber.Map{
+	resp := fiber.Map{
 		"status":         "ok",
 		"database":       dbStatus,
 		"active_workers": h.pool.ActiveCount(),
-	})
+	}
+
+	if h.registry != nil {
+		resp["node_id"] = h.registry.NodeID()
+		resp["region"] = h.registry.Region()
+	}
+
+	return ok(c, resp)
 }
 
 func (h *HealthHandler) Ready(c fiber.Ctx) error {

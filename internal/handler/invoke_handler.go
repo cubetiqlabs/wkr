@@ -5,8 +5,10 @@ import (
 	"time"
 
 	"github.com/cubetiqlabs/wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/metrics"
 	"github.com/cubetiqlabs/wkr/internal/model"
 	"github.com/cubetiqlabs/wkr/internal/runtime"
+	"github.com/cubetiqlabs/wkr/internal/security"
 	"github.com/cubetiqlabs/wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -17,10 +19,24 @@ type InvokeHandler struct {
 	workerService *service.WorkerService
 	quotaService  *service.QuotaService
 	pool          *runtime.Pool
+	auditor       *security.Auditor
+	nodeID        string
 }
 
-func NewInvokeHandler(workerService *service.WorkerService, quotaService *service.QuotaService, pool *runtime.Pool) *InvokeHandler {
-	return &InvokeHandler{workerService: workerService, quotaService: quotaService, pool: pool}
+func NewInvokeHandler(
+	workerService *service.WorkerService,
+	quotaService *service.QuotaService,
+	pool *runtime.Pool,
+	auditor *security.Auditor,
+	nodeID string,
+) *InvokeHandler {
+	return &InvokeHandler{
+		workerService: workerService,
+		quotaService:  quotaService,
+		pool:          pool,
+		auditor:       auditor,
+		nodeID:        nodeID,
+	}
 }
 
 // WorkerErrorDetail is the structured error response for worker execution failures.
@@ -30,6 +46,7 @@ type WorkerErrorDetail struct {
 	RequestID string   `json:"request_id"`
 	Worker    string   `json:"worker"`
 	Runtime   string   `json:"runtime"`
+	NodeID    string   `json:"node_id,omitempty"`
 	Logs      []string `json:"logs,omitempty"`
 }
 
@@ -48,17 +65,19 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	if err := h.quotaService.CheckInvocationAllowed(c.Context(), worker.OwnerID); err != nil {
 		switch err {
 		case service.ErrQuotaRequestsExceeded:
+			metrics.QuotaRejectedTotal.WithLabelValues("requests", h.nodeID).Inc()
 			return errResponse(c, fiber.StatusTooManyRequests, "daily request limit exceeded")
 		case service.ErrQuotaExecTimeExceeded:
+			metrics.QuotaRejectedTotal.WithLabelValues("exec_time", h.nodeID).Inc()
 			return errResponse(c, fiber.StatusTooManyRequests, "daily execution time limit exceeded")
 		case service.ErrQuotaBandwidthExceeded:
+			metrics.QuotaRejectedTotal.WithLabelValues("bandwidth", h.nodeID).Inc()
 			return errResponse(c, fiber.StatusTooManyRequests, "daily bandwidth limit exceeded")
 		default:
 			logger.Error("quota check failed", zap.Error(err))
 		}
 	}
 
-	// Build headers map
 	headers := make(map[string]string)
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		headers[string(key)] = string(value)
@@ -89,21 +108,21 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		RequestBytes: requestBytes,
 	}
 
-	// Set telemetry headers on all responses
 	setTelemetry := func(respBytes int64, dur time.Duration) {
 		c.Set("X-Cubis-Worker", worker.Name)
 		c.Set("X-Cubis-Request-ID", requestID)
+		c.Set("X-Cubis-Node-ID", h.nodeID)
 		c.Set("X-Cubis-Duration", dur.String())
 		c.Set("X-Cubis-Timestamp", time.Now().UTC().Format(time.RFC3339))
 		c.Set("X-Cubis-Request-Bytes", itoa64(requestBytes))
 		c.Set("X-Cubis-Response-Bytes", itoa64(respBytes))
 	}
 
-	// Pool-level error (timeout, context cancelled)
+	// Pool-level error
 	if err != nil {
 		inv.StatusCode = 500
 		inv.Error = err.Error()
-		go h.recordTelemetry(worker.OwnerID, inv, 0)
+		go h.recordTelemetry(worker.OwnerID, inv, 0, requestBytes, 0)
 		setTelemetry(0, 0)
 		logger.Error("worker execution failed",
 			zap.String("worker", worker.Name),
@@ -115,6 +134,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 			RequestID: requestID,
 			Worker:    worker.Name,
 			Runtime:   string(worker.Runtime),
+			NodeID:    h.nodeID,
 		})
 	}
 
@@ -125,10 +145,22 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	inv.ResponseBytes = responseBytes
 	inv.Error = result.Error
 
-	go h.recordTelemetry(worker.OwnerID, inv, result.Duration.Milliseconds())
+	go h.recordTelemetry(worker.OwnerID, inv, result.Duration.Milliseconds(), requestBytes, responseBytes)
 	setTelemetry(responseBytes, result.Duration)
 
-	// Worker runtime error (uncaught exception, panic, compile error)
+	// Security blocked
+	if result.StatusCode == 403 && result.Error != "" {
+		h.auditor.Log(c.Context(), "code_blocked", "warn", result.Error, c.IP(), worker.OwnerID, worker.ID)
+		return c.Status(fiber.StatusForbidden).JSON(WorkerErrorDetail{
+			Error:     result.Error,
+			RequestID: requestID,
+			Worker:    worker.Name,
+			Runtime:   string(worker.Runtime),
+			NodeID:    h.nodeID,
+		})
+	}
+
+	// Worker runtime error
 	if result.Error != "" {
 		logger.Warn("worker runtime error",
 			zap.String("worker", worker.Name),
@@ -142,11 +174,11 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 			RequestID: requestID,
 			Worker:    worker.Name,
 			Runtime:   string(worker.Runtime),
+			NodeID:    h.nodeID,
 			Logs:      result.Logs,
 		})
 	}
 
-	// Success — set worker response headers and return body
 	for k, v := range result.Headers {
 		c.Set(k, v)
 	}
@@ -154,6 +186,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	logger.Info("worker invoked",
 		zap.String("worker", worker.Name),
 		zap.String("request_id", requestID),
+		zap.String("node_id", h.nodeID),
 		zap.Int("status", result.StatusCode),
 		zap.Duration("duration", result.Duration),
 	)
@@ -161,10 +194,12 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	return c.Status(result.StatusCode).Send(result.Body)
 }
 
-func (h *InvokeHandler) recordTelemetry(ownerID uuid.UUID, inv *model.Invocation, execTimeMs int64) {
+func (h *InvokeHandler) recordTelemetry(ownerID uuid.UUID, inv *model.Invocation, execTimeMs, reqBytes, respBytes int64) {
 	ctx := context.Background()
 	h.workerService.RecordInvocation(ctx, inv)
 	h.quotaService.RecordUsage(ctx, ownerID, execTimeMs, inv.RequestBytes, inv.ResponseBytes, inv.Error != "")
+	metrics.RequestBytesTotal.WithLabelValues(h.nodeID).Add(float64(reqBytes))
+	metrics.ResponseBytesTotal.WithLabelValues(h.nodeID).Add(float64(respBytes))
 }
 
 func itoa64(n int64) string {

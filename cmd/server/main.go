@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/cubetiqlabs/wkr/internal/config"
 	"github.com/cubetiqlabs/wkr/internal/database"
+	"github.com/cubetiqlabs/wkr/internal/edge"
 	"github.com/cubetiqlabs/wkr/internal/handler"
 	"github.com/cubetiqlabs/wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/metrics"
 	"github.com/cubetiqlabs/wkr/internal/repository"
 	"github.com/cubetiqlabs/wkr/internal/runtime"
+	"github.com/cubetiqlabs/wkr/internal/security"
 	cubissentry "github.com/cubetiqlabs/wkr/internal/sentry"
 	"github.com/cubetiqlabs/wkr/internal/server"
 	"github.com/cubetiqlabs/wkr/internal/service"
@@ -38,6 +43,9 @@ func main() {
 		zap.String("name", cfg.App.Name),
 		zap.String("version", cfg.App.Version),
 		zap.String("env", cfg.App.Env),
+		zap.String("node_id", cfg.Edge.NodeID),
+		zap.String("region", cfg.Edge.Region),
+		zap.String("role", cfg.Edge.Role),
 	)
 
 	if err := cubissentry.Init(cfg.Sentry); err != nil {
@@ -70,25 +78,55 @@ func main() {
 	workerService := service.NewWorkerService(workerRepo, deploymentRepo, invocationRepo, cfg.Runtime.EncryptionKey)
 	quotaService := service.NewQuotaService(quotaRepo, workerRepo)
 
+	// Security
+	validator := security.NewValidator(cfg.Security)
+	auditor := security.NewAuditor(db, cfg.Security.AuditLog, cfg.Edge.NodeID)
+
 	// Runtime
-	engine := runtime.NewSandboxEngine()
-	pool := runtime.NewPool(engine, cfg.Runtime)
+	engine := runtime.NewSandboxEngine(cfg.Edge.NodeID)
+	pool := runtime.NewPool(engine, cfg.Runtime, validator, cfg.Edge.NodeID, cfg.Edge.Region)
+
+	// Edge cluster
+	registry := edge.NewRegistry(db, cfg.Edge)
+	edgeRouter := edge.NewRouter(registry)
+
+	endpoint := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	if err := registry.RegisterSelf(endpoint, cfg.Runtime.MaxConcurrentWorkers); err != nil {
+		logger.Error("edge registration failed", zap.Error(err))
+	}
+	registry.StartHeartbeat()
 
 	// Handlers
 	authHandler := handler.NewAuthHandler(authService)
 	workerHandler := handler.NewWorkerHandler(workerService, quotaService)
-	invokeHandler := handler.NewInvokeHandler(workerService, quotaService, pool)
-	healthHandler := handler.NewHealthHandler(db, pool)
+	invokeHandler := handler.NewInvokeHandler(workerService, quotaService, pool, auditor, cfg.Edge.NodeID)
+	healthHandler := handler.NewHealthHandler(db, pool, registry)
 	quotaHandler := handler.NewQuotaHandler(quotaService)
+	edgeHandler := handler.NewEdgeHandler(registry, edgeRouter)
 
 	// Server
 	app := server.New(cfg.Server, cfg.App)
-	router := server.NewRouter(app, authHandler, workerHandler, invokeHandler, healthHandler, quotaHandler, []byte(cfg.Auth.JWTSecret))
+	router := server.NewRouter(app, authHandler, workerHandler, invokeHandler, healthHandler, quotaHandler, edgeHandler, []byte(cfg.Auth.JWTSecret), cfg.Metrics)
 	router.Setup()
 
 	// Graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Uptime tracker
+	startTime := time.Now()
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				metrics.UptimeSeconds.Set(time.Since(startTime).Seconds())
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	go func() {
 		if err := server.Listen(app, cfg.Server); err != nil {
@@ -100,6 +138,7 @@ func main() {
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 
+	registry.Shutdown()
 	if err := pool.Shutdown(context.Background()); err != nil {
 		logger.Error("runtime pool shutdown error", zap.Error(err))
 	}

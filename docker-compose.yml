@@ -1,15 +1,34 @@
 services:
+  # ── Control Plane ──
   app:
     build: .
     ports:
       - "8080:8080"
     environment:
       - CUBIS_CONFIG=/app/config.yml
+      - DATABASE_HOST=db
+      - DATABASE_PORT=5432
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Edge Node (example) ──
+  edge-1:
+    build: .
+    ports:
+      - "8081:8080"
+    environment:
+      - CUBIS_CONFIG=/app/config-edge.yml
+      - DATABASE_HOST=db
+      - DATABASE_PORT=5432
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["edge"]
+
+  # ── Database ──
   db:
     image: postgres:17-alpine
     environment:
@@ -26,5 +45,39 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Observability ──
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    depends_on:
+      - app
+    profiles: ["monitoring"]
+
+  grafana:
+    image: grafana/grafana:12.0.1
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=cubis
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./deploy/grafana/provisioning-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./deploy/grafana/provisioning-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./deploy/grafana/dashboard.json:/var/lib/grafana/dashboards/cubis-wkr.json:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    profiles: ["monitoring"]
+
 volumes:
   pgdata:
+  prometheus_data:
+  grafana_data:

@@ -12,6 +12,9 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	Auth     AuthConfig     `mapstructure:"auth"`
 	Runtime  RuntimeConfig  `mapstructure:"runtime"`
+	Edge     EdgeConfig     `mapstructure:"edge"`
+	Security SecurityConfig `mapstructure:"security"`
+	Metrics  MetricsConfig  `mapstructure:"metrics"`
 	Log      LogConfig      `mapstructure:"log"`
 	Sentry   SentryConfig   `mapstructure:"sentry"`
 }
@@ -67,6 +70,38 @@ type RuntimeConfig struct {
 	EncryptionKey        string        `mapstructure:"encryption_key"`
 }
 
+// EdgeConfig controls distributed execution and edge node behavior.
+type EdgeConfig struct {
+	Enabled    bool          `mapstructure:"enabled"`
+	NodeID     string        `mapstructure:"node_id"`     // unique identifier for this node
+	Region     string        `mapstructure:"region"`      // e.g. "us-east-1", "eu-west-1"
+	Role       string        `mapstructure:"role"`        // "control" or "edge"
+	ControlURL string        `mapstructure:"control_url"` // URL of control plane (for edge nodes)
+	SyncInterval time.Duration `mapstructure:"sync_interval"` // how often edge syncs with control
+	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"`
+	FailoverTimeout   time.Duration `mapstructure:"failover_timeout"`
+}
+
+// SecurityConfig controls sandbox security hardening.
+type SecurityConfig struct {
+	MaxCodeSizeBytes  int           `mapstructure:"max_code_size_bytes"`
+	MaxOutputBytes    int           `mapstructure:"max_output_bytes"`
+	BlockedImports    []string      `mapstructure:"blocked_imports"`    // Go imports to block
+	BlockedJSGlobals  []string      `mapstructure:"blocked_js_globals"` // JS globals to block
+	NetworkDisabled   bool          `mapstructure:"network_disabled"`   // block all outbound network
+	FSDisabled        bool          `mapstructure:"fs_disabled"`        // block filesystem access
+	CodeSigningKey    string        `mapstructure:"code_signing_key"`   // HMAC key for code integrity
+	RateLimitPerWorker int          `mapstructure:"rate_limit_per_worker"`
+	AuditLog          bool          `mapstructure:"audit_log"`
+}
+
+// MetricsConfig controls Prometheus metrics exposure.
+type MetricsConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Path    string `mapstructure:"path"` // default "/metrics"
+	Port    int    `mapstructure:"port"` // separate port for metrics, 0 = same as server
+}
+
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
@@ -92,6 +127,36 @@ func Load(path string) (*Config, error) {
 	if err := viper.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
+
+	// Defaults
+	if cfg.Edge.NodeID == "" {
+		cfg.Edge.NodeID = "node-1"
+	}
+	if cfg.Edge.Region == "" {
+		cfg.Edge.Region = "default"
+	}
+	if cfg.Edge.Role == "" {
+		cfg.Edge.Role = "control"
+	}
+	if cfg.Edge.SyncInterval == 0 {
+		cfg.Edge.SyncInterval = 30 * time.Second
+	}
+	if cfg.Edge.HeartbeatInterval == 0 {
+		cfg.Edge.HeartbeatInterval = 10 * time.Second
+	}
+	if cfg.Edge.FailoverTimeout == 0 {
+		cfg.Edge.FailoverTimeout = 30 * time.Second
+	}
+	if cfg.Security.MaxCodeSizeBytes == 0 {
+		cfg.Security.MaxCodeSizeBytes = 1 << 20 // 1MB
+	}
+	if cfg.Security.MaxOutputBytes == 0 {
+		cfg.Security.MaxOutputBytes = 5 << 20 // 5MB
+	}
+	if cfg.Metrics.Path == "" {
+		cfg.Metrics.Path = "/metrics"
+	}
+
 	return cfg, nil
 }
 

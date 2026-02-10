@@ -1,0 +1,172 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "title": "🟢 Success Rate (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 0 },
+      "targets": [{
+        "expr": "sum(rate(cubis_invocations_success_total[5m])) / clamp_min(sum(rate(cubis_invocations_total[5m])), 1)",
+        "legendFormat": "Success Rate"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "steps": [{"color":"red","value":0},{"color":"yellow","value":0.95},{"color":"green","value":0.99}] } } }
+    },
+    {
+      "title": "📊 Total Invocations",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 0 },
+      "targets": [{ "expr": "sum(increase(cubis_invocations_total[24h]))", "legendFormat": "24h" }],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "✅ Succeeded (24h)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 0 },
+      "targets": [{ "expr": "sum(increase(cubis_invocations_success_total[24h]))", "legendFormat": "Success" }],
+      "fieldConfig": { "defaults": { "color": {"mode":"fixed","fixedColor":"green"} } }
+    },
+    {
+      "title": "❌ Failed (24h)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 12, "y": 0 },
+      "targets": [{ "expr": "sum(increase(cubis_invocations_failed_total[24h]))", "legendFormat": "Failed" }],
+      "fieldConfig": { "defaults": { "color": {"mode":"fixed","fixedColor":"red"} } }
+    },
+    {
+      "title": "⏱ Avg Duration",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 16, "y": 0 },
+      "targets": [{ "expr": "sum(rate(cubis_invocation_duration_seconds_sum[5m])) / clamp_min(sum(rate(cubis_invocation_duration_seconds_count[5m])), 1)", "legendFormat": "Avg" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "⏰ Uptime",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 20, "y": 0 },
+      "targets": [{ "expr": "cubis_uptime_seconds", "legendFormat": "Uptime" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Invocations / sec (Success vs Failed)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "sum(rate(cubis_invocations_success_total[5m]))", "legendFormat": "✅ success" },
+        { "expr": "sum(rate(cubis_invocations_failed_total[5m]))", "legendFormat": "❌ failed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [{"matcher":{"id":"byName","options":"❌ failed"},"properties":[{"id":"color","value":{"mode":"fixed","fixedColor":"red"}}]}] }
+    },
+    {
+      "title": "Failure Breakdown",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "expr": "sum(rate(cubis_invocation_runtime_errors_total[5m])) by (runtime)", "legendFormat": "runtime_error ({{runtime}})" },
+        { "expr": "sum(rate(cubis_invocation_compile_errors_total[5m]))", "legendFormat": "compile_error" },
+        { "expr": "sum(rate(cubis_invocation_timeouts_total[5m]))", "legendFormat": "timeout" },
+        { "expr": "sum(rate(cubis_security_blocked_total[5m]))", "legendFormat": "security_blocked" },
+        { "expr": "sum(rate(cubis_pool_rejected_total[5m]))", "legendFormat": "pool_rejected" },
+        { "expr": "sum(rate(cubis_quota_rejected_total[5m])) by (reason)", "legendFormat": "quota_{{reason}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "title": "Duration Percentiles (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(cubis_invocation_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(cubis_invocation_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(cubis_invocation_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Active Workers / Pool Capacity",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        { "expr": "cubis_active_workers", "legendFormat": "active ({{node_id}})" },
+        { "expr": "cubis_pool_capacity", "legendFormat": "capacity ({{node_id}})" }
+      ],
+      "fieldConfig": { "overrides": [{"matcher":{"id":"byRegexp","options":"capacity.*"},"properties":[{"id":"custom.lineStyle","value":{"fill":"dash","dash":[10,10]}},{"id":"custom.fillOpacity","value":0}]}] }
+    },
+    {
+      "title": "Pool Queue Wait (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 22 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(cubis_pool_queue_wait_seconds_bucket[5m])) by (le, node_id))", "legendFormat": "{{node_id}}" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Go Compile Duration (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 22 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(cubis_go_compile_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95 compile" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Go Cache Hit Rate",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 22 },
+      "targets": [{ "expr": "sum(rate(cubis_go_cache_hits_total[5m])) / clamp_min(sum(rate(cubis_go_cache_hits_total[5m])) + sum(rate(cubis_go_cache_misses_total[5m])), 1)", "legendFormat": "Hit Rate" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "steps": [{"color":"red","value":0},{"color":"yellow","value":0.8},{"color":"green","value":0.95}] } } }
+    },
+    {
+      "title": "HTTP Requests / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "targets": [{ "expr": "sum(rate(cubis_http_requests_total[5m])) by (path)", "legendFormat": "{{path}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "title": "Bandwidth (In / Out)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "targets": [
+        { "expr": "sum(rate(cubis_request_bytes_total[5m]))", "legendFormat": "⬇ inbound" },
+        { "expr": "sum(rate(cubis_response_bytes_total[5m]))", "legendFormat": "⬆ outbound" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "title": "Auth (Success / Failed)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 38 },
+      "targets": [
+        { "expr": "rate(cubis_auth_success_total[5m])", "legendFormat": "✅ success" },
+        { "expr": "rate(cubis_auth_failed_total[5m])", "legendFormat": "❌ failed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "title": "Edge Nodes Online",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 38 },
+      "targets": [{ "expr": "sum(cubis_edge_node_status)", "legendFormat": "Online" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color":"red","value":0},{"color":"green","value":1}] } } }
+    },
+    {
+      "title": "Top Workers (24h)",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 38 },
+      "targets": [{ "expr": "topk(10, sum(increase(cubis_invocations_total[24h])) by (worker))", "legendFormat": "{{worker}}" }]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["cubis", "workers", "serverless"],
+  "templating": {
+    "list": [
+      { "name": "node_id", "type": "query", "query": "label_values(cubis_active_workers, node_id)", "multi": true, "includeAll": true },
+      { "name": "region", "type": "query", "query": "label_values(cubis_active_workers, region)", "multi": true, "includeAll": true },
+      { "name": "runtime", "type": "query", "query": "label_values(cubis_invocations_total, runtime)", "multi": true, "includeAll": true }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "Cubis Workers — Operations Dashboard",
+  "uid": "cubis-wkr-ops",
+  "version": 2
+}

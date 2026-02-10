@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cubetiqlabs/wkr/internal/metrics"
 )
 
 // SandboxEngine executes workers in isolated subprocess sandboxes.
@@ -34,9 +36,12 @@ type SandboxEngine struct {
 
 	// Buffer pool for stdout/stderr
 	bufPool sync.Pool
+
+	// Node identity for metrics
+	nodeID string
 }
 
-func NewSandboxEngine() *SandboxEngine {
+func NewSandboxEngine(nodeID string) *SandboxEngine {
 	cacheDir := filepath.Join(os.TempDir(), "cubis-cache")
 	os.MkdirAll(cacheDir, 0o755)
 
@@ -60,6 +65,7 @@ func NewSandboxEngine() *SandboxEngine {
 		goCacheDir: cacheDir,
 		jsRuntime:  jsRT,
 		hostEnv:    hostEnv,
+		nodeID:     nodeID,
 		bufPool: sync.Pool{
 			New: func() interface{} { return new(bytes.Buffer) },
 		},
@@ -156,10 +162,13 @@ func (e *SandboxEngine) getOrCompileGo(ctx context.Context, req *ExecutionReques
 	if cached, ok := e.goBinCache.Load(cacheKey); ok {
 		binPath := cached.(string)
 		if _, err := os.Stat(binPath); err == nil {
+			metrics.GoCacheHits.WithLabelValues(e.nodeID).Inc()
 			return binPath, nil
 		}
 		e.goBinCache.Delete(cacheKey) // stale entry
 	}
+
+	metrics.GoCacheMisses.WithLabelValues(e.nodeID).Inc()
 
 	// Slow path: compile
 	srcPath := filepath.Join(e.goCacheDir, cacheKey+".go")
@@ -177,9 +186,11 @@ func (e *SandboxEngine) getOrCompileGo(ctx context.Context, req *ExecutionReques
 	cmd.Stderr = stderr
 	cmd.Env = e.hostEnv
 
+	compileStart := time.Now()
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("compile failed: %s", stderr.String())
 	}
+	metrics.GoCompileDuration.WithLabelValues(e.nodeID).Observe(time.Since(compileStart).Seconds())
 
 	e.goBinCache.Store(cacheKey, binPath)
 	return binPath, nil

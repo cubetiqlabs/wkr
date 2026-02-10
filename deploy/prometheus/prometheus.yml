@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "cubis-wkr"
+    static_configs:
+      - targets: ["app:8080"]
+        labels:
+          service: "cubis-wkr"
+    metrics_path: /metrics
+
+  # Add more edge nodes here:
+  # - job_name: "cubis-edge-us-east"
+  #   static_configs:
+  #     - targets: ["edge-us-east:8080"]
+  #       labels:
+  #         service: "cubis-wkr"
+  #         region: "us-east-1"

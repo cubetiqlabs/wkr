@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/cubetiqlabs/wkr/internal/metrics"
 	"github.com/cubetiqlabs/wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 )
@@ -21,6 +22,7 @@ func (h *AuthHandler) Register(c fiber.Ctx) error {
 
 	resp, err := h.authService.Register(c.Context(), input)
 	if err != nil {
+		metrics.AuthFailedTotal.Inc()
 		switch err {
 		case service.ErrEmailExists:
 			return errResponse(c, fiber.StatusConflict, err.Error())
@@ -29,6 +31,7 @@ func (h *AuthHandler) Register(c fiber.Ctx) error {
 		}
 	}
 
+	metrics.AuthSuccessTotal.Inc()
 	return created(c, resp)
 }
 
@@ -40,6 +43,7 @@ func (h *AuthHandler) Login(c fiber.Ctx) error {
 
 	resp, err := h.authService.Login(c.Context(), input)
 	if err != nil {
+		metrics.AuthFailedTotal.Inc()
 		switch err {
 		case service.ErrInvalidCredentials:
 			return errResponse(c, fiber.StatusUnauthorized, err.Error())
@@ -48,5 +52,6 @@ func (h *AuthHandler) Login(c fiber.Ctx) error {
 		}
 	}
 
+	metrics.AuthSuccessTotal.Inc()
 	return ok(c, resp)
 }

@@ -3,11 +3,14 @@ package server
 import (
 	"time"
 
+	"github.com/cubetiqlabs/wkr/internal/config"
 	"github.com/cubetiqlabs/wkr/internal/handler"
 	"github.com/cubetiqlabs/wkr/internal/middleware"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
 type Router struct {
@@ -17,7 +20,9 @@ type Router struct {
 	invokeHandler *handler.InvokeHandler
 	healthHandler *handler.HealthHandler
 	quotaHandler  *handler.QuotaHandler
+	edgeHandler   *handler.EdgeHandler
 	jwtSecret     []byte
+	metricsCfg    config.MetricsConfig
 }
 
 func NewRouter(
@@ -27,7 +32,9 @@ func NewRouter(
 	invokeHandler *handler.InvokeHandler,
 	healthHandler *handler.HealthHandler,
 	quotaHandler *handler.QuotaHandler,
+	edgeHandler *handler.EdgeHandler,
 	jwtSecret []byte,
+	metricsCfg config.MetricsConfig,
 ) *Router {
 	return &Router{
 		app:           app,
@@ -36,7 +43,9 @@ func NewRouter(
 		invokeHandler: invokeHandler,
 		healthHandler: healthHandler,
 		quotaHandler:  quotaHandler,
+		edgeHandler:   edgeHandler,
 		jwtSecret:     jwtSecret,
+		metricsCfg:    metricsCfg,
 	}
 }
 
@@ -44,6 +53,9 @@ func (r *Router) Setup() {
 	r.app.Use(recover.New())
 	r.app.Use(middleware.SecurityHeaders())
 	r.app.Use(middleware.RequestLogger())
+	if r.metricsCfg.Enabled {
+		r.app.Use(middleware.PrometheusMiddleware())
+	}
 	r.app.Use(cors.New(cors.Config{
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -53,8 +65,15 @@ func (r *Router) Setup() {
 
 	limiter := middleware.NewRateLimiter(60, time.Minute)
 
+	// Health & metrics
 	r.app.Get("/health", r.healthHandler.Health)
 	r.app.Get("/ready", r.healthHandler.Ready)
+	if r.metricsCfg.Enabled {
+		r.app.Get(r.metricsCfg.Path, func(c fiber.Ctx) error {
+			fasthttpadaptor.NewFastHTTPHandler(promhttp.Handler())(c.RequestCtx())
+			return nil
+		})
+	}
 
 	v1 := r.app.Group("/api/v1")
 
@@ -77,6 +96,12 @@ func (r *Router) Setup() {
 	account := v1.Group("/account")
 	account.Use(middleware.Auth(r.jwtSecret))
 	account.Get("/usage", r.quotaHandler.GetQuota)
+
+	// Edge cluster (authenticated, admin)
+	edgeGroup := v1.Group("/edge")
+	edgeGroup.Use(middleware.Auth(r.jwtSecret))
+	edgeGroup.Get("/nodes", r.edgeHandler.ListNodes)
+	edgeGroup.Get("/status", r.edgeHandler.ClusterStatus)
 
 	// Invoke (public, rate-limited)
 	invoke := v1.Group("/invoke")
