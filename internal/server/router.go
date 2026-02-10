@@ -16,6 +16,7 @@ type Router struct {
 	workerHandler *handler.WorkerHandler
 	invokeHandler *handler.InvokeHandler
 	healthHandler *handler.HealthHandler
+	quotaHandler  *handler.QuotaHandler
 	jwtSecret     []byte
 }
 
@@ -25,6 +26,7 @@ func NewRouter(
 	workerHandler *handler.WorkerHandler,
 	invokeHandler *handler.InvokeHandler,
 	healthHandler *handler.HealthHandler,
+	quotaHandler *handler.QuotaHandler,
 	jwtSecret []byte,
 ) *Router {
 	return &Router{
@@ -33,12 +35,12 @@ func NewRouter(
 		workerHandler: workerHandler,
 		invokeHandler: invokeHandler,
 		healthHandler: healthHandler,
+		quotaHandler:  quotaHandler,
 		jwtSecret:     jwtSecret,
 	}
 }
 
 func (r *Router) Setup() {
-	// Global middleware
 	r.app.Use(recover.New())
 	r.app.Use(middleware.SecurityHeaders())
 	r.app.Use(middleware.RequestLogger())
@@ -49,23 +51,20 @@ func (r *Router) Setup() {
 		MaxAge:       int(12 * time.Hour / time.Second),
 	}))
 
-	// Rate limiting for public endpoints
 	limiter := middleware.NewRateLimiter(60, time.Minute)
 
-	// Health endpoints (no auth)
 	r.app.Get("/health", r.healthHandler.Health)
 	r.app.Get("/ready", r.healthHandler.Ready)
 
-	// API v1
 	v1 := r.app.Group("/api/v1")
 
-	// Auth routes (public, rate-limited)
+	// Auth (public, rate-limited)
 	auth := v1.Group("/auth")
 	auth.Use(limiter.Handler())
 	auth.Post("/register", r.authHandler.Register)
 	auth.Post("/login", r.authHandler.Login)
 
-	// Worker routes (authenticated)
+	// Workers (authenticated)
 	workers := v1.Group("/workers")
 	workers.Use(middleware.Auth(r.jwtSecret))
 	workers.Post("/", r.workerHandler.Create)
@@ -74,7 +73,12 @@ func (r *Router) Setup() {
 	workers.Put("/:id", r.workerHandler.Update)
 	workers.Delete("/:id", r.workerHandler.Delete)
 
-	// Invoke route (public with rate limiting for worker execution)
+	// Account quota & usage (authenticated)
+	account := v1.Group("/account")
+	account.Use(middleware.Auth(r.jwtSecret))
+	account.Get("/usage", r.quotaHandler.GetQuota)
+
+	// Invoke (public, rate-limited)
 	invoke := v1.Group("/invoke")
 	invoke.Use(limiter.Handler())
 	invoke.Post("/:name", r.invokeHandler.Invoke)

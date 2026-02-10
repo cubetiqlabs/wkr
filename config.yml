@@ -33,6 +33,7 @@ runtime:
   max_memory_mb: 128
   max_concurrent_workers: 100
   sandbox_enabled: true
+  encryption_key: change-me-32-char-secret-key!!
 
 log:
   level: info

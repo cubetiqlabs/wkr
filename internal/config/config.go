@@ -60,10 +60,11 @@ type AuthConfig struct {
 }
 
 type RuntimeConfig struct {
-	MaxExecutionTime    time.Duration `mapstructure:"max_execution_time"`
-	MaxMemoryMB         int           `mapstructure:"max_memory_mb"`
-	MaxConcurrentWorkers int          `mapstructure:"max_concurrent_workers"`
-	SandboxEnabled      bool          `mapstructure:"sandbox_enabled"`
+	MaxExecutionTime     time.Duration `mapstructure:"max_execution_time"`
+	MaxMemoryMB          int           `mapstructure:"max_memory_mb"`
+	MaxConcurrentWorkers int           `mapstructure:"max_concurrent_workers"`
+	SandboxEnabled       bool          `mapstructure:"sandbox_enabled"`
+	EncryptionKey        string        `mapstructure:"encryption_key"`
 }
 
 type LogConfig struct {

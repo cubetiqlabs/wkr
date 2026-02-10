@@ -29,19 +29,17 @@ func main() {
 		panic("failed to load config: " + err.Error())
 	}
 
-	// Init zap logger
 	if err := logger.Init(cfg.Log); err != nil {
 		panic("failed to init logger: " + err.Error())
 	}
 	defer logger.Sync()
 
-	logger.Info("starting wkr",
+	logger.Info("starting cubis-wkr",
 		zap.String("name", cfg.App.Name),
 		zap.String("version", cfg.App.Version),
 		zap.String("env", cfg.App.Env),
 	)
 
-	// Init sentry (optional)
 	if err := cubissentry.Init(cfg.Sentry); err != nil {
 		logger.Error("sentry init failed", zap.Error(err))
 	}
@@ -65,10 +63,12 @@ func main() {
 	workerRepo := repository.NewWorkerRepository(db)
 	deploymentRepo := repository.NewDeploymentRepository(db)
 	invocationRepo := repository.NewInvocationRepository(db)
+	quotaRepo := repository.NewQuotaRepository(db)
 
 	// Services
 	authService := service.NewAuthService(userRepo, cfg.Auth.JWTSecret, cfg.Auth.JWTExpiry)
-	workerService := service.NewWorkerService(workerRepo, deploymentRepo, invocationRepo)
+	workerService := service.NewWorkerService(workerRepo, deploymentRepo, invocationRepo, cfg.Runtime.EncryptionKey)
+	quotaService := service.NewQuotaService(quotaRepo, workerRepo)
 
 	// Runtime
 	engine := runtime.NewSandboxEngine()
@@ -76,13 +76,14 @@ func main() {
 
 	// Handlers
 	authHandler := handler.NewAuthHandler(authService)
-	workerHandler := handler.NewWorkerHandler(workerService)
-	invokeHandler := handler.NewInvokeHandler(workerService, pool)
+	workerHandler := handler.NewWorkerHandler(workerService, quotaService)
+	invokeHandler := handler.NewInvokeHandler(workerService, quotaService, pool)
 	healthHandler := handler.NewHealthHandler(db, pool)
+	quotaHandler := handler.NewQuotaHandler(quotaService)
 
 	// Server
 	app := server.New(cfg.Server, cfg.App)
-	router := server.NewRouter(app, authHandler, workerHandler, invokeHandler, healthHandler, []byte(cfg.Auth.JWTSecret))
+	router := server.NewRouter(app, authHandler, workerHandler, invokeHandler, healthHandler, quotaHandler, []byte(cfg.Auth.JWTSecret))
 	router.Setup()
 
 	// Graceful shutdown
@@ -106,5 +107,5 @@ func main() {
 		logger.Error("server shutdown error", zap.Error(err))
 	}
 
-	logger.Info("wkr stopped")
+	logger.Info("cubis-wkr stopped")
 }

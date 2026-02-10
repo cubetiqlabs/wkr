@@ -14,5 +14,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.Worker{},
 		&model.Deployment{},
 		&model.Invocation{},
+		&model.AccountQuota{},
+		&model.UsageMetrics{},
 	)
 }

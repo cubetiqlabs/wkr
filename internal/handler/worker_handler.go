@@ -11,16 +11,24 @@ import (
 
 type WorkerHandler struct {
 	workerService *service.WorkerService
+	quotaService  *service.QuotaService
 }
 
-func NewWorkerHandler(workerService *service.WorkerService) *WorkerHandler {
-	return &WorkerHandler{workerService: workerService}
+func NewWorkerHandler(workerService *service.WorkerService, quotaService *service.QuotaService) *WorkerHandler {
+	return &WorkerHandler{workerService: workerService, quotaService: quotaService}
 }
 
 func (h *WorkerHandler) Create(c fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
 		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	// Enforce worker count limit
+	if err := h.quotaService.CheckWorkerLimit(c.Context(), userID); err != nil {
+		if err == service.ErrQuotaWorkersExceeded {
+			return errResponse(c, fiber.StatusForbidden, "maximum workers limit reached, upgrade your plan")
+		}
 	}
 
 	var input service.CreateWorkerInput
