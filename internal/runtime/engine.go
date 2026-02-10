@@ -7,15 +7,15 @@ import (
 )
 
 var (
-	ErrTimeout         = errors.New("worker execution timed out")
+	ErrTimeout            = errors.New("worker execution timed out")
 	ErrUnsupportedRuntime = errors.New("unsupported runtime")
-	ErrExecutionFailed = errors.New("worker execution failed")
+	ErrExecutionFailed    = errors.New("worker execution failed")
 )
 
-// ExecutionRequest represents a request to execute a worker.
 type ExecutionRequest struct {
 	WorkerName string
 	Code       string
+	CodeHash   string // used as cache key for compiled binaries
 	Runtime    string
 	EntryPoint string
 	EnvVars    map[string]string
@@ -25,7 +25,6 @@ type ExecutionRequest struct {
 	Path       string
 }
 
-// ExecutionResult represents the result of a worker execution.
 type ExecutionResult struct {
 	StatusCode int
 	Headers    map[string]string
@@ -36,7 +35,6 @@ type ExecutionResult struct {
 	Error      string
 }
 
-// Engine is the interface for worker execution engines.
 type Engine interface {
 	Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error)
 	Shutdown(ctx context.Context) error

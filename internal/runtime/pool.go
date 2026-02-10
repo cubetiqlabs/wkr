@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cubetiqlabs/wkr/internal/config"
@@ -11,13 +11,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// Pool manages concurrent worker executions with resource limits.
 type Pool struct {
 	engine    Engine
 	semaphore chan struct{}
 	cfg       config.RuntimeConfig
-	mu        sync.RWMutex
-	active    int
+	active    atomic.Int64
 }
 
 func NewPool(engine Engine, cfg config.RuntimeConfig) *Pool {
@@ -36,14 +34,8 @@ func (p *Pool) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionRe
 		return nil, fmt.Errorf("pool: %w", ctx.Err())
 	}
 
-	p.mu.Lock()
-	p.active++
-	p.mu.Unlock()
-	defer func() {
-		p.mu.Lock()
-		p.active--
-		p.mu.Unlock()
-	}()
+	p.active.Add(1)
+	defer p.active.Add(-1)
 
 	timeout := p.cfg.MaxExecutionTime
 	if timeout == 0 {
@@ -67,19 +59,17 @@ func (p *Pool) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionRe
 	}
 
 	result.Duration = elapsed
-	logger.Info("worker executed",
-		zap.String("worker", req.WorkerName),
-		zap.String("runtime", req.Runtime),
-		zap.Int("status", result.StatusCode),
-		zap.Duration("duration", elapsed),
-	)
+	if elapsed > 500*time.Millisecond {
+		logger.Warn("slow worker execution",
+			zap.String("worker", req.WorkerName),
+			zap.Duration("duration", elapsed),
+		)
+	}
 	return result, nil
 }
 
 func (p *Pool) ActiveCount() int {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.active
+	return int(p.active.Load())
 }
 
 func (p *Pool) Shutdown(ctx context.Context) error {

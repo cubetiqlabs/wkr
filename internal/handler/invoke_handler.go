@@ -60,6 +60,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	req := &runtime.ExecutionRequest{
 		WorkerName: worker.Name,
 		Code:       worker.Code,
+		CodeHash:   worker.CodeHash,
 		Runtime:    string(worker.Runtime),
 		EntryPoint: worker.EntryPoint,
 		EnvVars:    worker.EnvVars,

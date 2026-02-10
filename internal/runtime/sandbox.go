@@ -3,19 +3,77 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
+	"path/filepath"
+	"sync"
 	"time"
 )
 
 // SandboxEngine executes workers in isolated subprocess sandboxes.
-type SandboxEngine struct{}
+// Optimizations:
+//   - Go binaries are compiled once and cached by code hash
+//   - JS runtime (deno/node) is detected once at startup
+//   - Host environment vars are cached once
+//   - Buffer pools reduce GC pressure under load
+type SandboxEngine struct {
+	// Go binary cache: codeHash -> compiled binary path
+	goBinCache sync.Map
+	goCacheDir string
+
+	// JS runtime detection (resolved once)
+	jsRuntime string // "deno" or "node"
+
+	// Cached host env (immutable after init)
+	hostEnv []string
+
+	// Buffer pool for stdout/stderr
+	bufPool sync.Pool
+}
 
 func NewSandboxEngine() *SandboxEngine {
-	return &SandboxEngine{}
+	cacheDir := filepath.Join(os.TempDir(), "cubis-cache")
+	os.MkdirAll(cacheDir, 0o755)
+
+	// Detect JS runtime once
+	jsRT := "node"
+	if _, err := exec.LookPath("deno"); err == nil {
+		jsRT = "deno"
+	}
+
+	// Cache host env once
+	hostEnv := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"GOPATH=" + os.Getenv("GOPATH"),
+		"GOROOT=" + os.Getenv("GOROOT"),
+		"GOMODCACHE=" + os.Getenv("GOMODCACHE"),
+		"GOCACHE=" + os.Getenv("GOCACHE"),
+	}
+
+	return &SandboxEngine{
+		goCacheDir: cacheDir,
+		jsRuntime:  jsRT,
+		hostEnv:    hostEnv,
+		bufPool: sync.Pool{
+			New: func() interface{} { return new(bytes.Buffer) },
+		},
+	}
+}
+
+func (e *SandboxEngine) getBuf() *bytes.Buffer {
+	b := e.bufPool.Get().(*bytes.Buffer)
+	b.Reset()
+	return b
+}
+
+func (e *SandboxEngine) putBuf(b *bytes.Buffer) {
+	if b.Cap() < 1<<20 { // don't pool buffers > 1MB
+		e.bufPool.Put(b)
+	}
 }
 
 func (e *SandboxEngine) Execute(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
@@ -29,42 +87,41 @@ func (e *SandboxEngine) Execute(ctx context.Context, req *ExecutionRequest) (*Ex
 	}
 }
 
+// ---------- Go Runtime (compiled binary cache) ----------
+
 func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
-	payload := buildWorkerPayload(req)
-
-	// Write to temp file — `go run` doesn't support stdin
-	tmpFile, err := os.CreateTemp("", "cubis-*.go")
+	binPath, err := e.getOrCompileGo(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
+		return &ExecutionResult{
+			StatusCode: 500,
+			Body:       []byte(err.Error()),
+			Error:      err.Error(),
+		}, nil
 	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
 
-	if _, err := tmpFile.WriteString(wrapGoCode(req.Code, req.EntryPoint)); err != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("failed to write temp file: %w", err)
-	}
-	tmpFile.Close()
+	payload := buildWorkerPayload(req)
+	env := e.buildWorkerEnv(req.EnvVars)
+	env = append(env, "CUBIS_PAYLOAD="+string(payload))
 
-	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "go", "run", tmpPath)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	cmd.Env = buildEnv(req.EnvVars)
-	cmd.Env = append(cmd.Env, "CUBIS_PAYLOAD="+string(payload))
+	stdout := e.getBuf()
+	stderr := e.getBuf()
+	defer e.putBuf(stdout)
+	defer e.putBuf(stderr)
 
-	var memBefore runtime.MemStats
-	runtime.ReadMemStats(&memBefore)
+	cmd := exec.CommandContext(ctx, binPath)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Env = env
 
 	start := time.Now()
 	err = cmd.Run()
-	goRunDuration := time.Since(start)
+	duration := time.Since(start)
 
 	if ctx.Err() != nil {
 		return &ExecutionResult{
 			StatusCode: 504,
 			Body:       []byte(`{"error":"execution timed out"}`),
-			Duration:   goRunDuration,
+			Duration:   duration,
 			Error:      ErrTimeout.Error(),
 		}, ErrTimeout
 	}
@@ -72,34 +129,82 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 	if err != nil {
 		return &ExecutionResult{
 			StatusCode: 500,
-			Body:       []byte(stderr.String()),
-			Duration:   goRunDuration,
+			Body:       copyBytes(stderr.Bytes()),
+			Duration:   duration,
 			Error:      err.Error(),
 			Logs:       []string{stderr.String()},
 		}, nil
 	}
 
-	return parseWorkerOutput(stdout.Bytes(), goRunDuration)
+	return parseWorkerOutput(copyBytes(stdout.Bytes()), duration)
 }
+
+// getOrCompileGo returns a cached binary path or compiles one.
+func (e *SandboxEngine) getOrCompileGo(ctx context.Context, req *ExecutionRequest) (string, error) {
+	cacheKey := req.CodeHash
+	if cacheKey == "" {
+		h := sha256.Sum256([]byte(req.Code + req.EntryPoint))
+		cacheKey = fmt.Sprintf("%x", h)
+	}
+
+	// Fast path: cached binary exists
+	if cached, ok := e.goBinCache.Load(cacheKey); ok {
+		binPath := cached.(string)
+		if _, err := os.Stat(binPath); err == nil {
+			return binPath, nil
+		}
+		e.goBinCache.Delete(cacheKey) // stale entry
+	}
+
+	// Slow path: compile
+	srcPath := filepath.Join(e.goCacheDir, cacheKey+".go")
+	binPath := filepath.Join(e.goCacheDir, cacheKey)
+
+	if err := os.WriteFile(srcPath, []byte(wrapGoCode(req.Code, req.EntryPoint)), 0o644); err != nil {
+		return "", fmt.Errorf("write source: %w", err)
+	}
+	defer os.Remove(srcPath)
+
+	stderr := e.getBuf()
+	defer e.putBuf(stderr)
+
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, srcPath)
+	cmd.Stderr = stderr
+	cmd.Env = e.hostEnv
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("compile failed: %s", stderr.String())
+	}
+
+	e.goBinCache.Store(cacheKey, binPath)
+	return binPath, nil
+}
+
+// ---------- JS/TS Runtime ----------
 
 func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
 	payload := buildWorkerPayload(req)
+	code := wrapJSCode(req.Code, req.EntryPoint)
 
-	var stdout, stderr bytes.Buffer
-
-	rt := "deno"
-	args := []string{"eval", "--no-remote", wrapJSCode(req.Code, req.EntryPoint)}
-
-	if _, err := exec.LookPath("deno"); err != nil {
-		rt = "node"
-		args = []string{"-e", wrapJSCode(req.Code, req.EntryPoint)}
+	var args []string
+	if e.jsRuntime == "deno" {
+		args = []string{"eval", "--no-remote", code}
+	} else {
+		args = []string{"-e", code}
 	}
 
-	cmd := exec.CommandContext(ctx, rt, args...)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	cmd.Env = buildEnv(req.EnvVars)
-	cmd.Env = append(cmd.Env, "CUBIS_PAYLOAD="+string(payload))
+	env := e.buildWorkerEnv(req.EnvVars)
+	env = append(env, "CUBIS_PAYLOAD="+string(payload))
+
+	stdout := e.getBuf()
+	stderr := e.getBuf()
+	defer e.putBuf(stdout)
+	defer e.putBuf(stderr)
+
+	cmd := exec.CommandContext(ctx, e.jsRuntime, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Env = env
 
 	start := time.Now()
 	err := cmd.Run()
@@ -117,17 +222,30 @@ func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*
 	if err != nil {
 		return &ExecutionResult{
 			StatusCode: 500,
-			Body:       []byte(stderr.String()),
+			Body:       copyBytes(stderr.Bytes()),
 			Duration:   duration,
 			Error:      err.Error(),
 			Logs:       []string{stderr.String()},
 		}, nil
 	}
 
-	return parseWorkerOutput(stdout.Bytes(), duration)
+	return parseWorkerOutput(copyBytes(stdout.Bytes()), duration)
+}
+
+// ---------- Shared helpers ----------
+
+func (e *SandboxEngine) buildWorkerEnv(vars map[string]string) []string {
+	env := make([]string, len(e.hostEnv), len(e.hostEnv)+len(vars)+1)
+	copy(env, e.hostEnv)
+	for k, v := range vars {
+		env = append(env, k+"="+v)
+	}
+	return env
 }
 
 func (e *SandboxEngine) Shutdown(_ context.Context) error {
+	// Clean up compiled Go binaries
+	os.RemoveAll(e.goCacheDir)
 	return nil
 }
 
@@ -142,17 +260,11 @@ func buildWorkerPayload(req *ExecutionRequest) []byte {
 	return data
 }
 
-func buildEnv(vars map[string]string) []string {
-	env := []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + os.Getenv("HOME"),
-		"GOPATH=" + os.Getenv("GOPATH"),
-		"GOROOT=" + os.Getenv("GOROOT"),
-	}
-	for k, v := range vars {
-		env = append(env, k+"="+v)
-	}
-	return env
+// copyBytes returns a copy that's safe to use after buffer is recycled.
+func copyBytes(b []byte) []byte {
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
 }
 
 func wrapGoCode(code, entryPoint string) string {
@@ -173,21 +285,13 @@ import (
 	"time"
 )
 
-// --- Cubis Context Helpers ---
-
-// Env returns the value of an environment variable.
 func Env(key string) string { return os.Getenv(key) }
-
-// EnvOr returns the value of an environment variable or a default.
 func EnvOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" { return v }
 	return fallback
 }
-
-// Fetch performs an HTTP request and returns the response body as a string.
 func Fetch(rawURL string, opts ...map[string]string) (string, error) {
-	method := "GET"
-	body := ""
+	method := "GET"; body := ""
 	var headers map[string]string
 	if len(opts) > 0 {
 		if m, ok := opts[0]["method"]; ok { method = strings.ToUpper(m) }
@@ -201,46 +305,19 @@ func Fetch(rawURL string, opts ...map[string]string) (string, error) {
 	for k, v := range headers {
 		if k != "method" && k != "body" { req.Header.Set(k, v) }
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
-	if err != nil { return "", err }
-	return string(data), nil
+	return string(data), err
 }
-
-// Base64Encode encodes a string to base64.
 func Base64Encode(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
-
-// Base64Decode decodes a base64 string.
-func Base64Decode(s string) (string, error) {
-	b, err := base64.StdEncoding.DecodeString(s)
-	return string(b), err
-}
-
-// SHA256Hash returns the hex-encoded SHA-256 hash of a string.
-func SHA256Hash(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:])
-}
-
-// MD5Hash returns the hex-encoded MD5 hash of a string.
-func MD5Hash(s string) string {
-	h := md5.Sum([]byte(s))
-	return hex.EncodeToString(h[:])
-}
-
-// URLEncode encodes a string for use in a URL query.
+func Base64Decode(s string) (string, error) { b, err := base64.StdEncoding.DecodeString(s); return string(b), err }
+func SHA256Hash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+func MD5Hash(s string) string { h := md5.Sum([]byte(s)); return hex.EncodeToString(h[:]) }
 func URLEncode(s string) string { return url.QueryEscape(s) }
-
-// URLDecode decodes a URL-encoded string.
 func URLDecode(s string) (string, error) { return url.QueryUnescape(s) }
-
-// Log prints a message to stderr (captured as worker logs).
 func Log(args ...interface{}) { fmt.Fprintln(os.Stderr, args...) }
-
-// --- User Code ---
 
 %s
 
@@ -248,9 +325,7 @@ func main() {
 	payload := os.Getenv("CUBIS_PAYLOAD")
 	var req map[string]interface{}
 	json.Unmarshal([]byte(payload), &req)
-
 	result := %s(req)
-
 	out, _ := json.Marshal(map[string]interface{}{
 		"status":  200,
 		"headers": map[string]string{"Content-Type": "application/json"},
@@ -262,114 +337,25 @@ func main() {
 }
 
 func wrapJSCode(code, entryPoint string) string {
-	return fmt.Sprintf(`
-// --- Cubis Runtime Context ---
-const __cubis = {
-  _getEnv(key) {
-    try { return Deno.env.get(key) || ""; } catch(_) {}
-    try { return process.env[key] || ""; } catch(_) {}
-    return "";
-  },
-  _write(s) {
-    try { process.stdout.write(s); return; } catch(_) {}
-    try { Deno.stdout.writeSync(new TextEncoder().encode(s)); } catch(_) {}
-  }
-};
-
-// env(key) / env(key, default)
-function env(key, fallback) {
-  const v = __cubis._getEnv(key);
-  return v || (fallback !== undefined ? fallback : "");
-}
-
-// fetch is globally available in Deno; polyfill for Node
-if (typeof globalThis.fetch === "undefined") {
-  globalThis.fetch = async (url, opts) => {
-    const http = require(url.startsWith("https") ? "https" : "http");
-    return new Promise((resolve, reject) => {
-      const req = http.request(url, {method: (opts||{}).method||"GET"}, (res) => {
-        let data = "";
-        res.on("data", c => data += c);
-        res.on("end", () => resolve({
-          ok: res.statusCode >= 200 && res.statusCode < 300,
-          status: res.statusCode,
-          text: async () => data,
-          json: async () => JSON.parse(data),
-          headers: res.headers
-        }));
-      });
-      req.on("error", reject);
-      if ((opts||{}).body) req.write(opts.body);
-      req.end();
-    });
-  };
-}
-
-// log(...args) - captured in stderr
-function log(...args) { console.error(...args); }
-
-// base64 encode/decode
-function btoa(s) {
-  try { return globalThis.btoa(s); } catch(_) { return Buffer.from(s).toString("base64"); }
-}
-function atob(s) {
-  try { return globalThis.atob(s); } catch(_) { return Buffer.from(s, "base64").toString(); }
-}
-
-// crypto helpers
-const crypto = globalThis.crypto || {};
-async function sha256(msg) {
-  if (crypto.subtle) {
-    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(msg));
-    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
-  }
-  const c = require("crypto");
-  return c.createHash("sha256").update(msg).digest("hex");
-}
-async function md5(msg) {
-  try { const c = require("crypto"); return c.createHash("md5").update(msg).digest("hex"); }
-  catch(_) { throw new Error("md5 not available in this runtime"); }
-}
-
-// uuid v4
-function uuid() {
-  if (crypto.randomUUID) return crypto.randomUUID();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
-    const r = Math.random()*16|0;
-    return (c==="x"?r:(r&0x3|0x8)).toString(16);
-  });
-}
-
-// sleep(ms)
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// jsonParse / jsonStringify with error handling
-function jsonParse(s, fallback) { try { return JSON.parse(s); } catch(_) { return fallback !== undefined ? fallback : null; } }
-function jsonStringify(v, pretty) { return pretty ? JSON.stringify(v, null, 2) : JSON.stringify(v); }
-
-// urlEncode / urlDecode
-function urlEncode(s) { return encodeURIComponent(s); }
-function urlDecode(s) { return decodeURIComponent(s); }
-
-// --- User Code ---
+	return fmt.Sprintf(`const __cubis={_getEnv(k){try{return Deno.env.get(k)||""}catch(_){}try{return process.env[k]||""}catch(_){}return""},_write(s){try{process.stdout.write(s);return}catch(_){}try{Deno.stdout.writeSync(new TextEncoder().encode(s))}catch(_){}}};
+function env(k,d){const v=__cubis._getEnv(k);return v||(d!==undefined?d:"")}
+function log(...a){console.error(...a)}
+function btoa(s){try{return globalThis.btoa(s)}catch(_){return Buffer.from(s).toString("base64")}}
+function atob(s){try{return globalThis.atob(s)}catch(_){return Buffer.from(s,"base64").toString()}}
+const crypto=globalThis.crypto||{};
+async function sha256(m){if(crypto.subtle){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(m));return[...new Uint8Array(b)].map(b=>b.toString(16).padStart(2,"0")).join("")}const c=require("crypto");return c.createHash("sha256").update(m).digest("hex")}
+async function md5(m){const c=require("crypto");return c.createHash("md5").update(m).digest("hex")}
+function uuid(){if(crypto.randomUUID)return crypto.randomUUID();return"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==="x"?r:(r&3|8)).toString(16)})}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+function jsonParse(s,f){try{return JSON.parse(s)}catch(_){return f!==undefined?f:null}}
+function jsonStringify(v,p){return p?JSON.stringify(v,null,2):JSON.stringify(v)}
+function urlEncode(s){return encodeURIComponent(s)}
+function urlDecode(s){return decodeURIComponent(s)}
+if(typeof globalThis.fetch==="undefined"){globalThis.fetch=async(u,o)=>{const h=require(u.startsWith("https")?"https":"http");return new Promise((res,rej)=>{const r=h.request(u,{method:(o||{}).method||"GET"},s=>{let d="";s.on("data",c=>d+=c);s.on("end",()=>res({ok:s.statusCode>=200&&s.statusCode<300,status:s.statusCode,text:async()=>d,json:async()=>JSON.parse(d),headers:s.headers}))});r.on("error",rej);if((o||{}).body)r.write(o.body);r.end()})}}
 
 %s
 
-// --- Execute ---
-(async () => {
-  const payload = jsonParse(__cubis._getEnv("CUBIS_PAYLOAD"), {});
-  let result;
-  const fn = %s;
-  result = fn(payload);
-  if (result instanceof Promise) result = await result;
-
-  const output = jsonStringify({
-    status: 200,
-    headers: {"Content-Type": "application/json"},
-    body: typeof result === "string" ? result : jsonStringify(result)
-  });
-  __cubis._write(output);
-})();
+;(async()=>{const payload=jsonParse(__cubis._getEnv("CUBIS_PAYLOAD"),{});let result=%s(payload);if(result instanceof Promise)result=await result;const output=jsonStringify({status:200,headers:{"Content-Type":"application/json"},body:typeof result==="string"?result:jsonStringify(result)});__cubis._write(output)})();
 `, code, entryPoint)
 }
 
