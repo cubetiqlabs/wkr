@@ -13,6 +13,7 @@ type RateLimiter struct {
 	visitors map[string]*visitor
 	rate     int
 	window   time.Duration
+	stopCh   chan struct{}
 }
 
 type visitor struct {
@@ -25,8 +26,8 @@ func NewRateLimiter(rate int, window time.Duration) *RateLimiter {
 		visitors: make(map[string]*visitor),
 		rate:     rate,
 		window:   window,
+		stopCh:   make(chan struct{}),
 	}
-	// Cleanup stale entries periodically
 	go rl.cleanup()
 	return rl
 }
@@ -64,16 +65,25 @@ func (rl *RateLimiter) Handler() fiber.Handler {
 	}
 }
 
+func (rl *RateLimiter) Stop() {
+	close(rl.stopCh)
+}
+
 func (rl *RateLimiter) cleanup() {
 	ticker := time.NewTicker(rl.window * 2)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		for ip, v := range rl.visitors {
-			if time.Since(v.lastReset) > rl.window*2 {
-				delete(rl.visitors, ip)
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			for ip, v := range rl.visitors {
+				if time.Since(v.lastReset) > rl.window*2 {
+					delete(rl.visitors, ip)
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.stopCh:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }

@@ -16,6 +16,7 @@ RUN mkdir -p /tmp/cubis-cache && chown cubis:cubis /tmp/cubis-cache
 WORKDIR /app
 COPY --from=builder /wkr .
 COPY config.yml .
+COPY config-edge.yml .
 RUN chown -R cubis:cubis /app
 USER cubis
 EXPOSE 8080

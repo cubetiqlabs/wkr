@@ -18,13 +18,15 @@ import (
 
 // Router selects the best edge node for execution and handles failover.
 type Router struct {
-	registry *Registry
-	client   *http.Client
+	registry       *Registry
+	client         *http.Client
+	internalSecret string // shared secret for inter-node auth
 }
 
-func NewRouter(registry *Registry) *Router {
+func NewRouter(registry *Registry, internalSecret string) *Router {
 	return &Router{
-		registry: registry,
+		registry:       registry,
+		internalSecret: internalSecret,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -32,18 +34,15 @@ func NewRouter(registry *Registry) *Router {
 }
 
 // SelectNode picks the best node for a given region preference.
-// Strategy: least-loaded node in the preferred region, fallback to any region.
 func (r *Router) SelectNode(preferredRegion string) *model.EdgeNode {
 	nodes := r.registry.GetHealthyNodes(preferredRegion)
 	if len(nodes) == 0 {
-		// Fallback: any healthy node
 		nodes = r.registry.GetHealthyNodes("")
 	}
 	if len(nodes) == 0 {
 		return nil
 	}
 
-	// Sort by load (active/max ratio), pick least loaded
 	sort.Slice(nodes, func(i, j int) bool {
 		loadI := float64(nodes[i].ActiveWorkers) / float64(max(nodes[i].MaxWorkers, 1))
 		loadJ := float64(nodes[j].ActiveWorkers) / float64(max(nodes[j].MaxWorkers, 1))
@@ -53,8 +52,8 @@ func (r *Router) SelectNode(preferredRegion string) *model.EdgeNode {
 	return nodes[0]
 }
 
-// ForwardRequest proxies an invocation to a remote edge node with failover.
-func (r *Router) ForwardRequest(ctx context.Context, node *model.EdgeNode, workerName string, method string, body []byte, headers map[string]string) (int, []byte, map[string]string, error) {
+// ForwardRequest proxies an invocation to a remote edge node.
+func (r *Router) ForwardRequest(ctx context.Context, node *model.EdgeNode, workerName, method string, body []byte, headers map[string]string) (int, []byte, map[string]string, error) {
 	url := fmt.Sprintf("%s/api/v1/invoke/%s", node.Endpoint, workerName)
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
@@ -94,14 +93,13 @@ func (r *Router) ForwardRequest(ctx context.Context, node *model.EdgeNode, worke
 	return resp.StatusCode, respBody, respHeaders, nil
 }
 
-// ForwardWithFailover tries the primary node, then falls back to alternatives.
+// ForwardWithFailover tries nodes sequentially until one succeeds.
 func (r *Router) ForwardWithFailover(ctx context.Context, workerName, method, preferredRegion string, body []byte, headers map[string]string) (int, []byte, map[string]string, error) {
 	nodes := r.registry.GetHealthyNodes(preferredRegion)
 	if len(nodes) == 0 {
 		nodes = r.registry.GetHealthyNodes("")
 	}
 
-	// Sort by load
 	sort.Slice(nodes, func(i, j int) bool {
 		return nodes[i].ActiveWorkers < nodes[j].ActiveWorkers
 	})
@@ -109,7 +107,7 @@ func (r *Router) ForwardWithFailover(ctx context.Context, workerName, method, pr
 	var lastErr error
 	for _, node := range nodes {
 		if node.NodeID == r.registry.NodeID() {
-			continue // don't forward to self
+			continue
 		}
 		status, respBody, respHeaders, err := r.ForwardRequest(ctx, node, workerName, method, body, headers)
 		if err != nil {
@@ -141,14 +139,7 @@ func (r *Router) EdgeStatus() map[string]interface{} {
 	}
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// SyncWorkerToEdge pushes a worker deployment to an edge node.
+// SyncWorkerToEdge pushes a worker deployment to an edge node with authenticated internal call.
 func (r *Router) SyncWorkerToEdge(ctx context.Context, node *model.EdgeNode, worker interface{}) error {
 	url := fmt.Sprintf("%s/internal/sync/worker", node.Endpoint)
 	data, _ := json.Marshal(worker)
@@ -158,7 +149,9 @@ func (r *Router) SyncWorkerToEdge(ctx context.Context, node *model.EdgeNode, wor
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Cubis-Internal", "true")
+	if r.internalSecret != "" {
+		req.Header.Set("X-Cubis-Internal-Secret", r.internalSecret)
+	}
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -171,4 +164,9 @@ func (r *Router) SyncWorkerToEdge(ctx context.Context, node *model.EdgeNode, wor
 		return fmt.Errorf("sync failed: %s", string(body))
 	}
 	return nil
+}
+
+// ValidateInternalSecret checks the shared secret on incoming internal requests.
+func (r *Router) ValidateInternalSecret(secret string) bool {
+	return r.internalSecret != "" && secret == r.internalSecret
 }

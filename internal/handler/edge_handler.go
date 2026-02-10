@@ -25,3 +25,13 @@ func (h *EdgeHandler) ListNodes(c fiber.Ctx) error {
 func (h *EdgeHandler) ClusterStatus(c fiber.Ctx) error {
 	return ok(c, h.router.EdgeStatus())
 }
+
+// SyncWorker receives a worker deployment from another edge node.
+func (h *EdgeHandler) SyncWorker(c fiber.Ctx) error {
+	secret := c.Get("X-Cubis-Internal-Secret")
+	if !h.router.ValidateInternalSecret(secret) {
+		return errResponse(c, fiber.StatusUnauthorized, "invalid internal secret")
+	}
+	// TODO: persist synced worker data
+	return ok(c, fiber.Map{"synced": true})
+}

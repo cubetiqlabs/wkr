@@ -10,6 +10,8 @@ server:
   write_timeout: 10s
   idle_timeout: 120s
   body_limit: 10485760 # 10MB
+  cors_origins:        # restrict in production, e.g. ["https://app.example.com"]
+    - "*"
 
 database:
   host: db
@@ -24,7 +26,7 @@ database:
   auto_migrate: true
 
 auth:
-  jwt_secret: change-me-in-production-use-env-var
+  jwt_secret: change-me-in-production-use-env-var  # REJECTED in non-development envs
   jwt_expiry: 24h
   api_key_header: X-API-Key
 
@@ -33,40 +35,41 @@ runtime:
   max_memory_mb: 128
   max_concurrent_workers: 100
   sandbox_enabled: true
-  encryption_key: change-me-32-char-secret-key!!
+  encryption_key: change-me-32-char-secret-key!!   # REJECTED in non-development envs
 
 edge:
   enabled: true
   node_id: node-1
   region: default
-  role: control              # "control" or "edge"
-  control_url: ""            # set for edge nodes: http://control:8080
+  role: control
+  control_url: ""
+  internal_secret: change-me-internal-secret       # shared secret for inter-node auth
   sync_interval: 30s
   heartbeat_interval: 10s
   failover_timeout: 30s
 
 security:
-  max_code_size_bytes: 1048576   # 1MB
-  max_output_bytes: 5242880      # 5MB
-  blocked_imports:               # Go imports to block
+  max_code_size_bytes: 1048576
+  max_output_bytes: 5242880
+  blocked_imports:
     - os/exec
     - syscall
     - unsafe
     - plugin
-  blocked_js_globals:            # JS operations to block
+  blocked_js_globals:
     - Deno.run
     - Deno.Command
     - child_process
   network_disabled: false
-  fs_disabled: true              # block filesystem access in workers
-  code_signing_key: ""           # HMAC key for code integrity (optional)
+  fs_disabled: true
+  code_signing_key: ""
   rate_limit_per_worker: 100
   audit_log: true
 
 metrics:
   enabled: true
   path: /metrics
-  port: 0                       # 0 = same port as server
+  port: 0
 
 log:
   level: info

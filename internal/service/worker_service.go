@@ -7,9 +7,11 @@ import (
 	"fmt"
 
 	"github.com/cubetiqlabs/wkr/internal/crypto"
+	"github.com/cubetiqlabs/wkr/internal/logger"
 	"github.com/cubetiqlabs/wkr/internal/model"
 	"github.com/cubetiqlabs/wkr/internal/repository"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 var (
@@ -96,7 +98,9 @@ func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input Cre
 		Status:     model.DeploymentActive,
 		DeployedBy: ownerID,
 	}
-	_ = s.deploymentRepo.Create(ctx, dep)
+	if err := s.deploymentRepo.Create(ctx, dep); err != nil {
+		logger.Error("failed to record deployment", zap.Error(err))
+	}
 
 	// Return with decrypted env vars for the response
 	w.EnvVars = input.EnvVars
@@ -166,7 +170,9 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 			Status:     model.DeploymentActive,
 			DeployedBy: ownerID,
 		}
-		_ = s.deploymentRepo.Create(ctx, dep)
+		if err := s.deploymentRepo.Create(ctx, dep); err != nil {
+			logger.Error("failed to record deployment", zap.Error(err))
+		}
 	}
 
 	w.EnvVars = maskEnvVars(w.EnvVars)

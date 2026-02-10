@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"strings"
 
 	"github.com/cubetiqlabs/wkr/internal/config"
@@ -12,11 +14,35 @@ import (
 
 // Validator checks worker code for dangerous patterns before execution.
 type Validator struct {
-	cfg config.SecurityConfig
+	cfg            config.SecurityConfig
+	blockedImports map[string]struct{}
+	blockedJS      []string
 }
 
 func NewValidator(cfg config.SecurityConfig) *Validator {
-	return &Validator{cfg: cfg}
+	blocked := cfg.BlockedImports
+	if len(blocked) == 0 {
+		blocked = []string{
+			"os/exec", "syscall", "unsafe", "plugin",
+			"net/http/pprof", "runtime/debug",
+		}
+	}
+	bm := make(map[string]struct{}, len(blocked))
+	for _, imp := range blocked {
+		bm[imp] = struct{}{}
+	}
+
+	blockedJS := cfg.BlockedJSGlobals
+	if len(blockedJS) == 0 {
+		blockedJS = []string{
+			"Deno.run", "Deno.Command", "Deno.execPath",
+			"child_process", "require('fs')", `require("fs")`,
+			"Deno.writeFile", "Deno.readFile", "Deno.remove",
+			"Deno.mkdir", "Deno.writeTextFile",
+		}
+	}
+
+	return &Validator{cfg: cfg, blockedImports: bm, blockedJS: blockedJS}
 }
 
 // ValidateCode checks code size, blocked imports/globals, and integrity.
@@ -40,23 +66,30 @@ func (v *Validator) ValidateCode(code, runtime, codeHash string) error {
 	return nil
 }
 
+// validateGo uses the Go AST parser to reliably detect blocked imports,
+// preventing bypass via aliased imports or string manipulation.
 func (v *Validator) validateGo(code string) error {
-	// Default dangerous imports if none configured
-	blocked := v.cfg.BlockedImports
-	if len(blocked) == 0 {
-		blocked = []string{
-			"os/exec", "syscall", "unsafe", "plugin",
-			"net/http/pprof", "runtime/debug",
-		}
+	// Wrap in a minimal compilable file for AST parsing
+	wrapped := "package main\n" + code
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", wrapped, parser.ImportsOnly)
+	if err != nil {
+		// If AST parse fails, fall back to string scan (code may use raw function body)
+		return v.validateGoFallback(code)
 	}
-	for _, imp := range blocked {
-		// Check for both quoted import and dot-import
-		if strings.Contains(code, `"`+imp+`"`) {
-			return fmt.Errorf("blocked import: %s", imp)
+
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if _, blocked := v.blockedImports[path]; blocked {
+			return fmt.Errorf("blocked import: %s", path)
 		}
 	}
 
-	// Block direct file operations if FS disabled
+	// Also block go:linkname directive which can bypass import restrictions
+	if strings.Contains(code, "go:linkname") {
+		return fmt.Errorf("blocked directive: go:linkname")
+	}
+
 	if v.cfg.FSDisabled {
 		for _, fn := range []string{"os.Create", "os.Open", "os.Remove", "os.Mkdir", "os.WriteFile", "os.ReadFile"} {
 			if strings.Contains(code, fn) {
@@ -67,17 +100,21 @@ func (v *Validator) validateGo(code string) error {
 	return nil
 }
 
-func (v *Validator) validateJS(code string) error {
-	blocked := v.cfg.BlockedJSGlobals
-	if len(blocked) == 0 {
-		blocked = []string{
-			"Deno.run", "Deno.Command", "Deno.execPath",
-			"child_process", "require('fs')", "require(\"fs\")",
-			"Deno.writeFile", "Deno.readFile", "Deno.remove",
-			"Deno.mkdir", "Deno.writeTextFile",
+// validateGoFallback is used when AST parsing fails (user code is a function body, not a full file).
+func (v *Validator) validateGoFallback(code string) error {
+	for imp := range v.blockedImports {
+		if strings.Contains(code, `"`+imp+`"`) {
+			return fmt.Errorf("blocked import: %s", imp)
 		}
 	}
-	for _, g := range blocked {
+	if strings.Contains(code, "go:linkname") {
+		return fmt.Errorf("blocked directive: go:linkname")
+	}
+	return nil
+}
+
+func (v *Validator) validateJS(code string) error {
+	for _, g := range v.blockedJS {
 		if strings.Contains(code, g) {
 			return fmt.Errorf("blocked operation: %s", g)
 		}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/cubetiqlabs/wkr/internal/logger"
@@ -61,7 +62,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		return errResponse(c, fiber.StatusNotFound, "worker not found")
 	}
 
-	// Enforce account quota
+	// Enforce account quota — fail closed on unexpected errors
 	if err := h.quotaService.CheckInvocationAllowed(c.Context(), worker.OwnerID); err != nil {
 		switch err {
 		case service.ErrQuotaRequestsExceeded:
@@ -75,6 +76,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 			return errResponse(c, fiber.StatusTooManyRequests, "daily bandwidth limit exceeded")
 		default:
 			logger.Error("quota check failed", zap.Error(err))
+			return errResponse(c, fiber.StatusServiceUnavailable, "service temporarily unavailable")
 		}
 	}
 
@@ -114,8 +116,8 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		c.Set("X-Cubis-Node-ID", h.nodeID)
 		c.Set("X-Cubis-Duration", dur.String())
 		c.Set("X-Cubis-Timestamp", time.Now().UTC().Format(time.RFC3339))
-		c.Set("X-Cubis-Request-Bytes", itoa64(requestBytes))
-		c.Set("X-Cubis-Response-Bytes", itoa64(respBytes))
+		c.Set("X-Cubis-Request-Bytes", strconv.FormatInt(requestBytes, 10))
+		c.Set("X-Cubis-Response-Bytes", strconv.FormatInt(respBytes, 10))
 	}
 
 	// Pool-level error
@@ -200,23 +202,4 @@ func (h *InvokeHandler) recordTelemetry(ownerID uuid.UUID, inv *model.Invocation
 	h.quotaService.RecordUsage(ctx, ownerID, execTimeMs, inv.RequestBytes, inv.ResponseBytes, inv.Error != "")
 	metrics.RequestBytesTotal.WithLabelValues(h.nodeID).Add(float64(reqBytes))
 	metrics.ResponseBytesTotal.WithLabelValues(h.nodeID).Add(float64(respBytes))
-}
-
-func itoa64(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	s := ""
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	if neg {
-		s = "-" + s
-	}
-	return s
 }

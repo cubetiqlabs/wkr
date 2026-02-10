@@ -88,7 +88,7 @@ func main() {
 
 	// Edge cluster
 	registry := edge.NewRegistry(db, cfg.Edge)
-	edgeRouter := edge.NewRouter(registry)
+	edgeRouter := edge.NewRouter(registry, cfg.Edge.InternalSecret)
 
 	endpoint := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
 	if err := registry.RegisterSelf(endpoint, cfg.Runtime.MaxConcurrentWorkers); err != nil {
@@ -106,8 +106,8 @@ func main() {
 
 	// Server
 	app := server.New(cfg.Server, cfg.App)
-	router := server.NewRouter(app, authHandler, workerHandler, invokeHandler, healthHandler, quotaHandler, edgeHandler, []byte(cfg.Auth.JWTSecret), cfg.Metrics)
-	router.Setup()
+	router := server.NewRouter(app, authHandler, workerHandler, invokeHandler, healthHandler, quotaHandler, edgeHandler, []byte(cfg.Auth.JWTSecret), cfg.Metrics, cfg.Server.CORSOrigins)
+	limiter := router.Setup()
 
 	// Graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -138,6 +138,7 @@ func main() {
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 
+	limiter.Stop()
 	registry.Shutdown()
 	if err := pool.Shutdown(context.Background()); err != nil {
 		logger.Error("runtime pool shutdown error", zap.Error(err))

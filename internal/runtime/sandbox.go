@@ -43,7 +43,7 @@ type SandboxEngine struct {
 
 func NewSandboxEngine(nodeID string) *SandboxEngine {
 	cacheDir := filepath.Join(os.TempDir(), "cubis-cache")
-	os.MkdirAll(cacheDir, 0o755)
+	os.MkdirAll(cacheDir, 0o700)
 
 	// Detect JS runtime once
 	jsRT := "node"
@@ -109,7 +109,6 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 
 	payload := buildWorkerPayload(req)
 	env := e.buildWorkerEnv(req.EnvVars)
-	env = append(env, "CUBIS_PAYLOAD="+string(payload))
 
 	stdout := e.getBuf()
 	stderr := e.getBuf()
@@ -117,6 +116,7 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 	defer e.putBuf(stderr)
 
 	cmd := exec.CommandContext(ctx, binPath)
+	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = env
@@ -204,13 +204,14 @@ func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*
 
 	var args []string
 	if e.jsRuntime == "deno" {
-		args = []string{"eval", "--no-remote", code}
+		args = []string{"eval",
+			"--no-remote",
+			code}
 	} else {
 		args = []string{"-e", code}
 	}
 
 	env := e.buildWorkerEnv(req.EnvVars)
-	env = append(env, "CUBIS_PAYLOAD="+string(payload))
 
 	stdout := e.getBuf()
 	stderr := e.getBuf()
@@ -218,6 +219,7 @@ func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*
 	defer e.putBuf(stderr)
 
 	cmd := exec.CommandContext(ctx, e.jsRuntime, args...)
+	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = env
@@ -341,9 +343,9 @@ func Log(args ...interface{}) { fmt.Fprintln(os.Stderr, args...) }
 %s
 
 func main() {
-	payload := os.Getenv("CUBIS_PAYLOAD")
+	payload, _ := io.ReadAll(os.Stdin)
 	var req map[string]interface{}
-	json.Unmarshal([]byte(payload), &req)
+	json.Unmarshal(payload, &req)
 	result := %s(req)
 	out, _ := json.Marshal(map[string]interface{}{
 		"status":  200,
@@ -356,8 +358,9 @@ func main() {
 }
 
 func wrapJSCode(code, entryPoint string) string {
-	return fmt.Sprintf(`const __cubis={_getEnv(k){try{return Deno.env.get(k)||""}catch(_){}try{return process.env[k]||""}catch(_){}return""},_write(s){try{process.stdout.write(s);return}catch(_){}try{Deno.stdout.writeSync(new TextEncoder().encode(s))}catch(_){}}};
-function env(k,d){const v=__cubis._getEnv(k);return v||(d!==undefined?d:"")}
+	return fmt.Sprintf(`const __cubis={_write(s){try{process.stdout.write(s);return}catch(_){}try{Deno.stdout.writeSync(new TextEncoder().encode(s))}catch(_){}}};
+async function __readStdin(){try{const b=[];for await(const c of Deno.stdin.readable){b.push(c)}return new TextDecoder().decode(await new Blob(b).arrayBuffer())}catch(_){}try{const fs=require("fs");return fs.readFileSync(0,"utf8")}catch(_){}return"{}"}
+function env(k,d){try{const v=Deno.env.get(k);if(v)return v}catch(_){}try{if(process.env[k])return process.env[k]}catch(_){}return d!==undefined?d:""}
 function log(...a){console.error(...a)}
 function btoa(s){try{return globalThis.btoa(s)}catch(_){return Buffer.from(s).toString("base64")}}
 function atob(s){try{return globalThis.atob(s)}catch(_){return Buffer.from(s,"base64").toString()}}
@@ -374,7 +377,7 @@ if(typeof globalThis.fetch==="undefined"){globalThis.fetch=async(u,o)=>{const h=
 
 %s
 
-;(async()=>{const payload=jsonParse(__cubis._getEnv("CUBIS_PAYLOAD"),{});let result=%s(payload);if(result instanceof Promise)result=await result;const output=jsonStringify({status:200,headers:{"Content-Type":"application/json"},body:typeof result==="string"?result:jsonStringify(result)});__cubis._write(output)})();
+;(async()=>{const payload=jsonParse(await __readStdin(),{});let result=%s(payload);if(result instanceof Promise)result=await result;const output=jsonStringify({status:200,headers:{"Content-Type":"application/json"},body:typeof result==="string"?result:jsonStringify(result)});__cubis._write(output)})();
 `, code, entryPoint)
 }
 

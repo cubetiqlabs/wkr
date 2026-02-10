@@ -31,9 +31,12 @@ for _, imp := range f.Imports {
     if slices.Contains(blocked, path) { return err }
 }
 
-// For Deno, add all deny flags:
+// For Deno, add all deny flags: (newer)
 args = []string{"eval", "--no-remote", "--no-read", "--no-write",
     "--no-run", "--no-ffi", "--no-env", code}
+
+// For Deno (version below: 2.3.x)
+args = []string{"eval", "--no-remote", code}
 ```
 
 - **Impact**: Full remote code execution — an attacker can spawn processes, read the filesystem, or exfiltrate data from the host.

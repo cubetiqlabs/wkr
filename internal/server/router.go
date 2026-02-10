@@ -23,6 +23,7 @@ type Router struct {
 	edgeHandler   *handler.EdgeHandler
 	jwtSecret     []byte
 	metricsCfg    config.MetricsConfig
+	corsOrigins   []string
 }
 
 func NewRouter(
@@ -35,6 +36,7 @@ func NewRouter(
 	edgeHandler *handler.EdgeHandler,
 	jwtSecret []byte,
 	metricsCfg config.MetricsConfig,
+	corsOrigins []string,
 ) *Router {
 	return &Router{
 		app:           app,
@@ -46,10 +48,11 @@ func NewRouter(
 		edgeHandler:   edgeHandler,
 		jwtSecret:     jwtSecret,
 		metricsCfg:    metricsCfg,
+		corsOrigins:   corsOrigins,
 	}
 }
 
-func (r *Router) Setup() {
+func (r *Router) Setup() *middleware.RateLimiter {
 	r.app.Use(recover.New())
 	r.app.Use(middleware.SecurityHeaders())
 	r.app.Use(middleware.RequestLogger())
@@ -57,7 +60,7 @@ func (r *Router) Setup() {
 		r.app.Use(middleware.PrometheusMiddleware())
 	}
 	r.app.Use(cors.New(cors.Config{
-		AllowOrigins: []string{"*"},
+		AllowOrigins: r.corsOrigins,
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", "X-API-Key"},
 		MaxAge:       int(12 * time.Hour / time.Second),
@@ -108,4 +111,9 @@ func (r *Router) Setup() {
 	invoke.Use(limiter.Handler())
 	invoke.Post("/:name", r.invokeHandler.Invoke)
 	invoke.Get("/:name", r.invokeHandler.Invoke)
+
+	// Internal edge sync (secret-authenticated, not public)
+	r.app.Post("/internal/sync/worker", r.edgeHandler.SyncWorker)
+
+	return limiter
 }

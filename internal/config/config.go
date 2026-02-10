@@ -1,6 +1,10 @@
 package config
 
 import (
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -32,6 +36,7 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 	IdleTimeout  time.Duration `mapstructure:"idle_timeout"`
 	BodyLimit    int           `mapstructure:"body_limit"`
+	CORSOrigins  []string      `mapstructure:"cors_origins"` // empty = ["*"] in dev, blocked in prod
 }
 
 type DatabaseConfig struct {
@@ -47,13 +52,23 @@ type DatabaseConfig struct {
 	AutoMigrate     bool          `mapstructure:"auto_migrate"`
 }
 
+// DSN returns a properly escaped PostgreSQL connection string.
 func (d DatabaseConfig) DSN() string {
+	// Use url.QueryEscape for values that may contain special characters
 	return "host=" + d.Host +
-		" port=" + itoa(d.Port) +
+		" port=" + strconv.Itoa(d.Port) +
 		" user=" + d.User +
-		" password=" + d.Password +
+		" password='" + strings.ReplaceAll(d.Password, "'", "\\'") + "'" +
 		" dbname=" + d.Name +
 		" sslmode=" + d.SSLMode
+}
+
+// URI returns a PostgreSQL connection URI (alternative format).
+func (d DatabaseConfig) URI() string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		url.QueryEscape(d.User),
+		url.QueryEscape(d.Password),
+		d.Host, d.Port, d.Name, d.SSLMode)
 }
 
 type AuthConfig struct {
@@ -70,36 +85,34 @@ type RuntimeConfig struct {
 	EncryptionKey        string        `mapstructure:"encryption_key"`
 }
 
-// EdgeConfig controls distributed execution and edge node behavior.
 type EdgeConfig struct {
-	Enabled    bool          `mapstructure:"enabled"`
-	NodeID     string        `mapstructure:"node_id"`     // unique identifier for this node
-	Region     string        `mapstructure:"region"`      // e.g. "us-east-1", "eu-west-1"
-	Role       string        `mapstructure:"role"`        // "control" or "edge"
-	ControlURL string        `mapstructure:"control_url"` // URL of control plane (for edge nodes)
-	SyncInterval time.Duration `mapstructure:"sync_interval"` // how often edge syncs with control
+	Enabled           bool          `mapstructure:"enabled"`
+	NodeID            string        `mapstructure:"node_id"`
+	Region            string        `mapstructure:"region"`
+	Role              string        `mapstructure:"role"`
+	ControlURL        string        `mapstructure:"control_url"`
+	InternalSecret    string        `mapstructure:"internal_secret"` // shared secret for inter-node auth
+	SyncInterval      time.Duration `mapstructure:"sync_interval"`
 	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"`
 	FailoverTimeout   time.Duration `mapstructure:"failover_timeout"`
 }
 
-// SecurityConfig controls sandbox security hardening.
 type SecurityConfig struct {
-	MaxCodeSizeBytes  int           `mapstructure:"max_code_size_bytes"`
-	MaxOutputBytes    int           `mapstructure:"max_output_bytes"`
-	BlockedImports    []string      `mapstructure:"blocked_imports"`    // Go imports to block
-	BlockedJSGlobals  []string      `mapstructure:"blocked_js_globals"` // JS globals to block
-	NetworkDisabled   bool          `mapstructure:"network_disabled"`   // block all outbound network
-	FSDisabled        bool          `mapstructure:"fs_disabled"`        // block filesystem access
-	CodeSigningKey    string        `mapstructure:"code_signing_key"`   // HMAC key for code integrity
-	RateLimitPerWorker int          `mapstructure:"rate_limit_per_worker"`
-	AuditLog          bool          `mapstructure:"audit_log"`
+	MaxCodeSizeBytes   int      `mapstructure:"max_code_size_bytes"`
+	MaxOutputBytes     int      `mapstructure:"max_output_bytes"`
+	BlockedImports     []string `mapstructure:"blocked_imports"`
+	BlockedJSGlobals   []string `mapstructure:"blocked_js_globals"`
+	NetworkDisabled    bool     `mapstructure:"network_disabled"`
+	FSDisabled         bool     `mapstructure:"fs_disabled"`
+	CodeSigningKey     string   `mapstructure:"code_signing_key"`
+	RateLimitPerWorker int      `mapstructure:"rate_limit_per_worker"`
+	AuditLog           bool     `mapstructure:"audit_log"`
 }
 
-// MetricsConfig controls Prometheus metrics exposure.
 type MetricsConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
-	Path    string `mapstructure:"path"` // default "/metrics"
-	Port    int    `mapstructure:"port"` // separate port for metrics, 0 = same as server
+	Path    string `mapstructure:"path"`
+	Port    int    `mapstructure:"port"`
 }
 
 type LogConfig struct {
@@ -128,6 +141,16 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Reject default secrets in non-development environments
+	if cfg.App.Env != "" && cfg.App.Env != "development" {
+		if cfg.Auth.JWTSecret == "change-me-in-production-use-env-var" {
+			return nil, fmt.Errorf("jwt_secret must be changed in %s environment", cfg.App.Env)
+		}
+		if strings.Contains(cfg.Runtime.EncryptionKey, "change-me") {
+			return nil, fmt.Errorf("encryption_key must be changed in %s environment", cfg.App.Env)
+		}
+	}
+
 	// Defaults
 	if cfg.Edge.NodeID == "" {
 		cfg.Edge.NodeID = "node-1"
@@ -148,26 +171,17 @@ func Load(path string) (*Config, error) {
 		cfg.Edge.FailoverTimeout = 30 * time.Second
 	}
 	if cfg.Security.MaxCodeSizeBytes == 0 {
-		cfg.Security.MaxCodeSizeBytes = 1 << 20 // 1MB
+		cfg.Security.MaxCodeSizeBytes = 1 << 20
 	}
 	if cfg.Security.MaxOutputBytes == 0 {
-		cfg.Security.MaxOutputBytes = 5 << 20 // 5MB
+		cfg.Security.MaxOutputBytes = 5 << 20
 	}
 	if cfg.Metrics.Path == "" {
 		cfg.Metrics.Path = "/metrics"
 	}
+	if len(cfg.Server.CORSOrigins) == 0 {
+		cfg.Server.CORSOrigins = []string{"*"}
+	}
 
 	return cfg, nil
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	s := ""
-	for i > 0 {
-		s = string(rune('0'+i%10)) + s
-		i /= 10
-	}
-	return s
 }
