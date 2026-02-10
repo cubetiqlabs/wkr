@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -116,27 +118,30 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 	start := time.Now()
 	err = cmd.Run()
 	duration := time.Since(start)
+	logs := parseStderrLogs(stderr)
 
 	if ctx.Err() != nil {
 		return &ExecutionResult{
 			StatusCode: 504,
-			Body:       []byte(`{"error":"execution timed out"}`),
 			Duration:   duration,
-			Error:      ErrTimeout.Error(),
+			Error:      "execution timed out",
+			Logs:       logs,
 		}, ErrTimeout
 	}
 
 	if err != nil {
+		errMsg := extractRuntimeError(stderr.String(), "go")
 		return &ExecutionResult{
 			StatusCode: 500,
-			Body:       copyBytes(stderr.Bytes()),
 			Duration:   duration,
-			Error:      err.Error(),
-			Logs:       []string{stderr.String()},
+			Error:      errMsg,
+			Logs:       logs,
 		}, nil
 	}
 
-	return parseWorkerOutput(copyBytes(stdout.Bytes()), duration)
+	result, parseErr := parseWorkerOutput(copyBytes(stdout.Bytes()), duration)
+	result.Logs = logs
+	return result, parseErr
 }
 
 // getOrCompileGo returns a cached binary path or compiles one.
@@ -209,27 +214,30 @@ func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*
 	start := time.Now()
 	err := cmd.Run()
 	duration := time.Since(start)
+	logs := parseStderrLogs(stderr)
 
 	if ctx.Err() != nil {
 		return &ExecutionResult{
 			StatusCode: 504,
-			Body:       []byte(`{"error":"execution timed out"}`),
 			Duration:   duration,
-			Error:      ErrTimeout.Error(),
+			Error:      "execution timed out",
+			Logs:       logs,
 		}, ErrTimeout
 	}
 
 	if err != nil {
+		errMsg := extractRuntimeError(stderr.String(), req.Runtime)
 		return &ExecutionResult{
 			StatusCode: 500,
-			Body:       copyBytes(stderr.Bytes()),
 			Duration:   duration,
-			Error:      err.Error(),
-			Logs:       []string{stderr.String()},
+			Error:      errMsg,
+			Logs:       logs,
 		}, nil
 	}
 
-	return parseWorkerOutput(copyBytes(stdout.Bytes()), duration)
+	result, parseErr := parseWorkerOutput(copyBytes(stdout.Bytes()), duration)
+	result.Logs = logs
+	return result, parseErr
 }
 
 // ---------- Shared helpers ----------
@@ -357,6 +365,68 @@ if(typeof globalThis.fetch==="undefined"){globalThis.fetch=async(u,o)=>{const h=
 
 ;(async()=>{const payload=jsonParse(__cubis._getEnv("CUBIS_PAYLOAD"),{});let result=%s(payload);if(result instanceof Promise)result=await result;const output=jsonStringify({status:200,headers:{"Content-Type":"application/json"},body:typeof result==="string"?result:jsonStringify(result)});__cubis._write(output)})();
 `, code, entryPoint)
+}
+
+// parseStderrLogs splits stderr into non-empty lines for structured log capture.
+// ANSI escape codes are stripped for clean JSON output.
+func parseStderrLogs(buf *bytes.Buffer) []string {
+	if buf.Len() == 0 {
+		return nil
+	}
+	raw := stripANSI(strings.TrimSpace(buf.String()))
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, "\n")
+}
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+// extractRuntimeError parses stderr to find the actual error message
+// instead of returning useless "exit status 1".
+func extractRuntimeError(stderr, rt string) string {
+	stderr = stripANSI(strings.TrimSpace(stderr))
+	if stderr == "" {
+		return "worker exited with error (no output)"
+	}
+
+	lines := strings.Split(stderr, "\n")
+
+	// For JS/TS: look for "Uncaught", "Error:", "TypeError:", "RangeError:", etc.
+	if rt == "javascript" || rt == "typescript" {
+		for i := len(lines) - 1; i >= 0; i-- {
+			l := strings.TrimSpace(lines[i])
+			for _, prefix := range []string{"Uncaught", "Error:", "TypeError:", "RangeError:", "ReferenceError:", "SyntaxError:"} {
+				if strings.Contains(l, prefix) {
+					// Return this line plus any following stack lines (up to 5)
+					end := i + 6
+					if end > len(lines) {
+						end = len(lines)
+					}
+					return strings.Join(lines[i:end], "\n")
+				}
+			}
+		}
+	}
+
+	// For Go: look for "panic:", "runtime error:", or the last non-empty lines
+	if rt == "go" {
+		for _, l := range lines {
+			l = strings.TrimSpace(l)
+			if strings.HasPrefix(l, "panic:") || strings.Contains(l, "runtime error:") {
+				return l
+			}
+		}
+	}
+
+	// Fallback: return last meaningful lines (up to 10)
+	start := 0
+	if len(lines) > 10 {
+		start = len(lines) - 10
+	}
+	return strings.Join(lines[start:], "\n")
 }
 
 func parseWorkerOutput(data []byte, duration time.Duration) (*ExecutionResult, error) {

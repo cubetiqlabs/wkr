@@ -23,6 +23,16 @@ func NewInvokeHandler(workerService *service.WorkerService, quotaService *servic
 	return &InvokeHandler{workerService: workerService, quotaService: quotaService, pool: pool}
 }
 
+// WorkerErrorDetail is the structured error response for worker execution failures.
+type WorkerErrorDetail struct {
+	Success   bool     `json:"success"`
+	Error     string   `json:"error"`
+	RequestID string   `json:"request_id"`
+	Worker    string   `json:"worker"`
+	Runtime   string   `json:"runtime"`
+	Logs      []string `json:"logs,omitempty"`
+}
+
 func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	name := c.Params("name")
 	if name == "" {
@@ -71,27 +81,41 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	}
 
 	result, err := h.pool.Execute(c.Context(), req)
-
 	requestID := uuid.New().String()
 
-	// Build invocation record
 	inv := &model.Invocation{
 		WorkerID:     worker.ID,
 		OwnerID:      worker.OwnerID,
 		RequestBytes: requestBytes,
 	}
 
+	// Set telemetry headers on all responses
+	setTelemetry := func(respBytes int64, dur time.Duration) {
+		c.Set("X-Cubis-Worker", worker.Name)
+		c.Set("X-Cubis-Request-ID", requestID)
+		c.Set("X-Cubis-Duration", dur.String())
+		c.Set("X-Cubis-Timestamp", time.Now().UTC().Format(time.RFC3339))
+		c.Set("X-Cubis-Request-Bytes", itoa64(requestBytes))
+		c.Set("X-Cubis-Response-Bytes", itoa64(respBytes))
+	}
+
+	// Pool-level error (timeout, context cancelled)
 	if err != nil {
 		inv.StatusCode = 500
 		inv.Error = err.Error()
-		inv.ResponseBytes = 0
 		go h.recordTelemetry(worker.OwnerID, inv, 0)
+		setTelemetry(0, 0)
 		logger.Error("worker execution failed",
 			zap.String("worker", worker.Name),
 			zap.String("request_id", requestID),
 			zap.Error(err),
 		)
-		return errResponse(c, fiber.StatusInternalServerError, "worker execution failed: "+err.Error())
+		return c.Status(fiber.StatusInternalServerError).JSON(WorkerErrorDetail{
+			Error:     err.Error(),
+			RequestID: requestID,
+			Worker:    worker.Name,
+			Runtime:   string(worker.Runtime),
+		})
 	}
 
 	responseBytes := int64(len(result.Body))
@@ -99,30 +123,39 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	inv.Duration = result.Duration
 	inv.MemoryUsed = result.MemoryUsed
 	inv.ResponseBytes = responseBytes
-	if result.Error != "" {
-		inv.Error = result.Error
-	}
+	inv.Error = result.Error
 
 	go h.recordTelemetry(worker.OwnerID, inv, result.Duration.Milliseconds())
+	setTelemetry(responseBytes, result.Duration)
 
-	// Telemetry response headers
+	// Worker runtime error (uncaught exception, panic, compile error)
+	if result.Error != "" {
+		logger.Warn("worker runtime error",
+			zap.String("worker", worker.Name),
+			zap.String("request_id", requestID),
+			zap.String("error", result.Error),
+			zap.Strings("logs", result.Logs),
+			zap.Duration("duration", result.Duration),
+		)
+		return c.Status(result.StatusCode).JSON(WorkerErrorDetail{
+			Error:     result.Error,
+			RequestID: requestID,
+			Worker:    worker.Name,
+			Runtime:   string(worker.Runtime),
+			Logs:      result.Logs,
+		})
+	}
+
+	// Success — set worker response headers and return body
 	for k, v := range result.Headers {
 		c.Set(k, v)
 	}
-	c.Set("X-Cubis-Worker", worker.Name)
-	c.Set("X-Cubis-Duration", result.Duration.String())
-	c.Set("X-Cubis-Request-ID", requestID)
-	c.Set("X-Cubis-Timestamp", time.Now().UTC().Format(time.RFC3339))
-	c.Set("X-Cubis-Request-Bytes", itoa64(requestBytes))
-	c.Set("X-Cubis-Response-Bytes", itoa64(responseBytes))
 
 	logger.Info("worker invoked",
 		zap.String("worker", worker.Name),
 		zap.String("request_id", requestID),
 		zap.Int("status", result.StatusCode),
 		zap.Duration("duration", result.Duration),
-		zap.Int64("request_bytes", requestBytes),
-		zap.Int64("response_bytes", responseBytes),
 	)
 
 	return c.Status(result.StatusCode).Send(result.Body)

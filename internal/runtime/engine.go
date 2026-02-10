@@ -31,8 +31,8 @@ type ExecutionResult struct {
 	Body       []byte
 	Duration   time.Duration
 	MemoryUsed int
-	Logs       []string
-	Error      string
+	Logs       []string // stderr lines (user log() calls + runtime errors)
+	Error      string   // structured error message (not just exit code)
 }
 
 type Engine interface {
