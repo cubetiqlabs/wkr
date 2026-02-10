@@ -12,6 +12,19 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/ready",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── Edge Node ──
   edge-1:
@@ -23,9 +36,24 @@ services:
       - CUBIS_CONFIG=/app/config-edge.yml
       - CUBIS_EDGE_ADVERTISE_ADDR=http://edge-1:8080
     depends_on:
+      app:
+        condition: service_healthy
       db:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/ready",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     profiles: ["edge"]
 
   # ── Database ──
