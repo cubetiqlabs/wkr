@@ -15,9 +15,9 @@ RUN apk add --no-cache ca-certificates tzdata deno \
     && addgroup -S cubis && adduser -S cubis -G cubis \
     && mkdir -p /tmp/cubis-cache && chown cubis:cubis /tmp/cubis-cache
 WORKDIR /app
-COPY --from=builder --chown=cubis:cubis --chmod=0755 /wkr .
-COPY --chown=cubis:cubis config.yml .
-COPY --chown=cubis:cubis config-edge.yml .
+COPY --from=builder --chown=root:root --chmod=755 /wkr .
+COPY --chown=root:root --chmod=644 config.yml .
+COPY --chown=root:root --chmod=644 config-edge.yml .
 USER cubis
 EXPOSE 8080
 ENTRYPOINT ["./wkr"]
