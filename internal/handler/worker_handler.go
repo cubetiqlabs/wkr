@@ -9,6 +9,11 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	ERROR_WORKER_NOT_FOUND = "worker not found"
+	ERROR_INVALID_WORKER_ID  = "invalid worker ID"
+)
+
 type WorkerHandler struct {
 	workerService *service.WorkerService
 	quotaService  *service.QuotaService
@@ -52,12 +57,12 @@ func (h *WorkerHandler) Create(c fiber.Ctx) error {
 func (h *WorkerHandler) Get(c fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return errResponse(c, fiber.StatusBadRequest, "invalid worker ID")
+		return errResponse(c, fiber.StatusBadRequest, ERROR_INVALID_WORKER_ID)
 	}
 
 	worker, err := h.workerService.Get(c.Context(), id)
 	if err != nil {
-		return errResponse(c, fiber.StatusNotFound, err.Error())
+		return errResponse(c, fiber.StatusNotFound, ERROR_WORKER_NOT_FOUND)
 	}
 
 	return ok(c, worker)
@@ -94,7 +99,7 @@ func (h *WorkerHandler) Update(c fiber.Ctx) error {
 
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return errResponse(c, fiber.StatusBadRequest, "invalid worker ID")
+		return errResponse(c, fiber.StatusBadRequest, ERROR_INVALID_WORKER_ID)
 	}
 
 	var input service.UpdateWorkerInput
@@ -125,7 +130,7 @@ func (h *WorkerHandler) Delete(c fiber.Ctx) error {
 
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return errResponse(c, fiber.StatusBadRequest, "invalid worker ID")
+		return errResponse(c, fiber.StatusBadRequest, ERROR_INVALID_WORKER_ID)
 	}
 
 	if err := h.workerService.Delete(c.Context(), id, userID); err != nil {
