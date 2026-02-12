@@ -4,7 +4,9 @@ RUN apk add --no-cache git ca-certificates
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
-COPY internal cmd config.yml config-edge.yml ./
+COPY config.yml config-edge.yml ./
+COPY internal ./internal
+COPY cmd ./cmd
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /wkr ./cmd/server
 
 # Runtime stage — needs Go for compiling Go workers, Deno for JS/TS workers
