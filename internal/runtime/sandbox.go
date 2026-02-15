@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -271,9 +272,18 @@ func (e *SandboxEngine) Shutdown(_ context.Context) error {
 }
 
 func buildWorkerPayload(req *ExecutionRequest) []byte {
+	query := make(map[string]string)
+	if req.Query != "" {
+		if parsed, err := url.ParseQuery(req.Query); err == nil {
+			for k := range parsed {
+				query[k] = parsed.Get(k)
+			}
+		}
+	}
 	p := map[string]interface{}{
 		"method":  req.Method,
 		"path":    req.Path,
+		"query":   query,
 		"headers": req.Headers,
 		"body":    string(req.Payload),
 	}

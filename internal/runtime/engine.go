@@ -23,6 +23,7 @@ type ExecutionRequest struct {
 	Headers    map[string]string
 	Method     string
 	Path       string
+	Query      string
 }
 
 type ExecutionResult struct {

@@ -1,4 +1,5 @@
 function main(req) {
   const tz = new Date().toLocaleTimeString("en-US", { timeZone: "UTC" });
-  return { message: "Hello from Cubis Workers!", time: tz, random: Math.random(), req: req };
+  const name = req.query.name || "World";
+  return { message: "Hello from Cubis Workers!", time: tz, random: Math.random(), name, query: req.query };
 }

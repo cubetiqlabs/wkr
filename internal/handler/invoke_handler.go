@@ -142,6 +142,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		Headers:    headers,
 		Method:     c.Method(),
 		Path:       c.Path(),
+		Query:      string(c.Request().URI().QueryString()),
 	}
 
 	result, err := h.pool.Execute(c.Context(), req)
