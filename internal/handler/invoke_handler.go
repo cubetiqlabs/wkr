@@ -108,7 +108,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 				zap.String("target_node", target.NodeID),
 				zap.String("target_endpoint", target.Endpoint),
 			)
-			status, body, respHeaders, err := h.edgeRouter.ForwardRequest(c.Context(), target, name, c.Method(), reqBody, headers)
+			status, body, respHeaders, err := h.edgeRouter.ForwardRequest(c.Context(), target, name, c.Method(), reqBody, headers, string(c.Request().URI().QueryString()))
 			if err != nil {
 				logger.Error("edge forward failed, executing locally",
 					zap.String("target_node", target.NodeID),

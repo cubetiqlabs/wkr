@@ -9,6 +9,7 @@ import (
 	"github.com/cubetiqlabs/wkr/internal/logger"
 	"github.com/cubetiqlabs/wkr/internal/metrics"
 	"github.com/cubetiqlabs/wkr/internal/model"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -36,6 +37,7 @@ func NewRegistry(db *gorm.DB, cfg config.EdgeConfig) *Registry {
 // RegisterSelf registers or updates this node in the cluster.
 func (r *Registry) RegisterSelf(endpoint string, maxWorkers int) error {
 	node := &model.EdgeNode{
+		ID:         uuid.Must(uuid.NewV7()),
 		NodeID:     r.cfg.NodeID,
 		Region:     r.cfg.Region,
 		Role:       model.NodeRole(r.cfg.Role),

@@ -111,8 +111,11 @@ func (r *Router) ShouldForwardToEdge(isAlreadyForwarded bool) *model.EdgeNode {
 }
 
 // ForwardRequest proxies an invocation to a remote edge node.
-func (r *Router) ForwardRequest(ctx context.Context, node *model.EdgeNode, workerName, method string, body []byte, headers map[string]string) (int, []byte, map[string]string, error) {
+func (r *Router) ForwardRequest(ctx context.Context, node *model.EdgeNode, workerName, method string, body []byte, headers map[string]string, rawQuery string) (int, []byte, map[string]string, error) {
 	url := fmt.Sprintf("%s/api/v1/invoke/%s", node.Endpoint, workerName)
+	if rawQuery != "" {
+		url += "?" + rawQuery
+	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
@@ -152,7 +155,7 @@ func (r *Router) ForwardRequest(ctx context.Context, node *model.EdgeNode, worke
 }
 
 // ForwardWithFailover tries nodes sequentially until one succeeds.
-func (r *Router) ForwardWithFailover(ctx context.Context, workerName, method, preferredRegion string, body []byte, headers map[string]string) (int, []byte, map[string]string, error) {
+func (r *Router) ForwardWithFailover(ctx context.Context, workerName, method, preferredRegion string, body []byte, headers map[string]string, rawQuery string) (int, []byte, map[string]string, error) {
 	nodes := r.registry.GetHealthyNodes(preferredRegion)
 	if len(nodes) == 0 && preferredRegion != "" {
 		nodes = r.registry.GetHealthyNodes("")
@@ -170,7 +173,7 @@ func (r *Router) ForwardWithFailover(ctx context.Context, workerName, method, pr
 		if node.NodeID == r.registry.NodeID() {
 			continue
 		}
-		status, respBody, respHeaders, err := r.ForwardRequest(ctx, node, workerName, method, body, headers)
+		status, respBody, respHeaders, err := r.ForwardRequest(ctx, node, workerName, method, body, headers, rawQuery)
 		if err != nil {
 			lastErr = err
 			metrics.EdgeFailovers.WithLabelValues(node.NodeID, r.registry.NodeID(), node.Region).Inc()

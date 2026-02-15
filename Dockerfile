@@ -20,4 +20,4 @@ COPY --chown=root:root --chmod=644 config.yml .
 COPY --chown=root:root --chmod=644 config-edge.yml .
 USER cubis
 EXPOSE 8080
-ENTRYPOINT ["./wkr"]
+CMD ["/app/wkr"]
