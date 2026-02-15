@@ -49,12 +49,25 @@ make build && make run
 
 Deploy functions from your terminal — like Wrangler, but for Cubis Workers.
 
-```bash
-# Build the CLI
-make build-cli
+### Install
 
-# Or install globally
-make install-cli
+One-line install (Linux, macOS, Windows/Git Bash):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cubetiqlabs/wkr/main/scripts/install.sh | sh
+```
+
+Or build from source:
+
+```bash
+make build-cli      # builds ./bin/wkr
+make install-cli    # installs to PATH
+```
+
+### Update
+
+```bash
+wkr update
 ```
 
 ### Commands
@@ -73,6 +86,7 @@ make install-cli
 | `revisions`, `rev` | List deployment revisions for a worker   |
 | `rollback`         | Rollback a worker to a specific version  |
 | `logs`             | View invocation logs for a worker        |
+| `update`, `upgrade`| Update wkr to the latest version         |
 
 ### Workflow
 

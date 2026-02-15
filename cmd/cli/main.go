@@ -39,7 +39,9 @@ func main() {
 	case "rollback":
 		cmdRollback()
 	case "version", "-v", "--version":
-		fmt.Println("wkr-cli v" + version)
+		fmt.Println("wkr v" + version)
+	case "update", "upgrade":
+		cmdUpdate()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -50,9 +52,9 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`wkr-cli — Cubis Workers CLI
+	fmt.Println(`wkr — Cubis Workers CLI
 
-Usage: wkr-cli <command> [options]
+Usage: wkr <command> [options]
 
 Commands:
   login              Authenticate with the Cubis Workers API
@@ -67,26 +69,28 @@ Commands:
   revisions, rev     List deployment revisions for a worker
   logs               View invocation logs for a worker
   rollback           Rollback a worker to a specific version
+  update, upgrade    Update wkr to the latest version
   version            Print CLI version
   help               Show this help message
 
 Init options:
   --name <name>      Worker name (creates subfolder if set)
-  --runtime <rt>     Runtime: go, javascript, typescript (default: javascript)
+  --runtime <rt>     Runtime: go, javascript, typescript, python (default: javascript)
   --template <tpl>   Use a prebuilt template (see --list-templates)
   --list-templates   List available templates
 
 Examples:
-  wkr-cli login --api-url http://localhost:8080 --email dev@example.com
-  wkr-cli whoami
-  wkr-cli init --name my-api --template json-api
-  wkr-cli init --template hello-go
-  wkr-cli deploy
-  wkr-cli dev --body '{"name":"test"}' --query 'page=1'
-  wkr-cli invoke hello
-  wkr-cli revisions hello
-  wkr-cli logs hello
-  wkr-cli logs hello -f
-  wkr-cli rollback hello --version 2
-  wkr-cli logout`)
+  wkr login --api-url http://localhost:8080 --email dev@example.com
+  wkr whoami
+  wkr init --name my-api --template json-api
+  wkr init --template hello-py
+  wkr deploy
+  wkr dev --body '{"name":"test"}' --query 'page=1'
+  wkr invoke hello
+  wkr revisions hello
+  wkr logs hello
+  wkr logs hello -f
+  wkr rollback hello --version 2
+  wkr update
+  wkr logout`)
 }
