@@ -87,7 +87,8 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	auth.Post("/login", r.authHandler.Login)
 
 	// WebSocket log stream (auth via query token, must be before /workers group)
-	v1.Get("/ws/logs/:name", r.workerHandler.LogStream)
+	v1.Use("/ws/logs/:name", r.workerHandler.LogStreamGuard)
+	v1.Get("/ws/logs/:name", r.workerHandler.LogStreamHandler())
 
 	// Workers (authenticated)
 	workers := v1.Group("/workers")

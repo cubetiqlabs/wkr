@@ -8,10 +8,9 @@ import (
 
 	"github.com/cubetiqlabs/wkr/internal/middleware"
 	"github.com/cubetiqlabs/wkr/internal/service"
-	fws "github.com/fasthttp/websocket"
+	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
-	"github.com/valyala/fasthttp"
 )
 
 const (
@@ -244,36 +243,23 @@ func (h *WorkerHandler) Logs(c fiber.Ctx) error {
 	return ok(c, logs)
 }
 
-var wsUpgrader = fws.FastHTTPUpgrader{
-	CheckOrigin: func(ctx *fasthttp.RequestCtx) bool { return true },
-}
+// LogStreamHandler returns a Fiber handler that upgrades to WebSocket for real-time log streaming.
+func (h *WorkerHandler) LogStreamHandler() fiber.Handler {
+	return websocket.New(func(c *websocket.Conn) {
+		// Auth: token was validated in the upgrade guard middleware, workerID stored in Locals
+		workerID, ok := c.Locals("ws_worker_id").(uuid.UUID)
+		if !ok {
+			return
+		}
 
-func (h *WorkerHandler) LogStream(c fiber.Ctx) error {
-	// Authenticate before upgrade — token from query param since WS can't set headers
-	token := c.Query("token")
-	if token == "" {
-		token = strings.TrimPrefix(c.Get("Authorization"), "Bearer ")
-	}
-	userID, err := middleware.ParseUserIDFromToken(token, h.jwtSecret)
-	if err != nil {
-		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
-	}
-
-	w, err := h.workerService.GetWorkerByNameForOwner(c.Context(), c.Params("name"), userID)
-	if err != nil {
-		return workerWriteError(c, err, "stream logs for")
-	}
-
-	workerID := w.ID
-	return wsUpgrader.Upgrade(c.RequestCtx(), func(conn *fws.Conn) {
 		ch := h.logBus.Subscribe(workerID)
 		defer h.logBus.Unsubscribe(workerID, ch)
-		defer conn.Close()
+		defer c.Close()
 
-		// Read pump — just drain to detect close
+		// Read pump — drain to detect client disconnect
 		go func() {
 			for {
-				if _, _, err := conn.ReadMessage(); err != nil {
+				if _, _, err := c.ReadMessage(); err != nil {
 					h.logBus.Unsubscribe(workerID, ch)
 					return
 				}
@@ -290,16 +276,41 @@ func (h *WorkerHandler) LogStream(c fiber.Ctx) error {
 					return
 				}
 				data, _ := json.Marshal(inv)
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := conn.WriteMessage(fws.TextMessage, data); err != nil {
+				c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := c.WriteMessage(websocket.TextMessage, data); err != nil {
 					return
 				}
 			case <-ticker.C:
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := conn.WriteMessage(fws.PingMessage, nil); err != nil {
+				c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := c.WriteMessage(websocket.PingMessage, nil); err != nil {
 					return
 				}
 			}
 		}
 	})
+}
+
+// LogStreamGuard is the middleware that runs before the WebSocket upgrade.
+// It validates the JWT token and resolves the worker, storing the workerID in Locals.
+func (h *WorkerHandler) LogStreamGuard(c fiber.Ctx) error {
+	if !websocket.IsWebSocketUpgrade(c) {
+		return fiber.ErrUpgradeRequired
+	}
+
+	token := c.Query("token")
+	if token == "" {
+		token = strings.TrimPrefix(c.Get("Authorization"), "Bearer ")
+	}
+	userID, err := middleware.ParseUserIDFromToken(token, h.jwtSecret)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	w, err := h.workerService.GetWorkerByNameForOwner(c.Context(), c.Params("name"), userID)
+	if err != nil {
+		return workerWriteError(c, err, "stream logs for")
+	}
+
+	c.Locals("ws_worker_id", w.ID)
+	return c.Next()
 }
