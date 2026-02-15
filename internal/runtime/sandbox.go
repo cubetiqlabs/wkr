@@ -361,6 +361,12 @@ func wrapGoCode(code, entryPoint string) string {
 	}
 	userImports, cleanCode := extractGoImports(code)
 
+	// Rename user's entrypoint to avoid conflict with wrapper's main()
+	if entryPoint == "main" {
+		cleanCode = strings.Replace(cleanCode, "func main(", "func __handler(", 1)
+		entryPoint = "__handler"
+	}
+
 	seen := make(map[string]struct{})
 	for _, i := range stdImports {
 		seen[i] = struct{}{}

@@ -24,6 +24,8 @@ func main() {
 		cmdInit()
 	case "deploy":
 		cmdDeploy()
+	case "dev":
+		cmdDev()
 	case "list", "ls":
 		cmdList()
 	case "invoke":
@@ -56,6 +58,7 @@ Commands:
   whoami             Show current authenticated user
   init               Initialize a new worker project
   deploy             Deploy the current worker to the platform
+  dev                Run worker locally (no deploy needed)
   list, ls           List your deployed workers
   invoke             Invoke a worker by name
   delete, rm         Delete a worker by name
@@ -76,6 +79,7 @@ Examples:
   wkr-cli init --name my-api --template json-api
   wkr-cli init --template hello-go
   wkr-cli deploy
+  wkr-cli dev --body '{"name":"test"}' --query 'page=1'
   wkr-cli invoke hello
   wkr-cli revisions hello
   wkr-cli rollback hello --version 2
