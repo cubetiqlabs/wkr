@@ -2,6 +2,7 @@ package handler
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/cubetiqlabs/wkr/internal/middleware"
 	"github.com/cubetiqlabs/wkr/internal/service"
@@ -10,9 +11,28 @@ import (
 )
 
 const (
-	ERROR_WORKER_NOT_FOUND = "worker not found"
-	ERROR_INVALID_WORKER_ID  = "invalid worker ID"
+	ERROR_WORKER_NOT_FOUND     = "worker not found"
+	ERROR_INVALID_WORKER_ID    = "invalid worker ID"
+	ERROR_INVALID_REQUEST_BODY = "invalid request body"
 )
+
+func workerWriteError(c fiber.Ctx, err error, action string) error {
+	switch err {
+	case service.ErrWorkerNotFound:
+		return errResponse(c, fiber.StatusNotFound, err.Error())
+	case service.ErrUnauthorized:
+		return errResponse(c, fiber.StatusForbidden, err.Error())
+	case service.ErrWorkerExists:
+		return errResponse(c, fiber.StatusConflict, err.Error())
+	case service.ErrRevisionNotFound:
+		return errResponse(c, fiber.StatusNotFound, err.Error())
+	default:
+		if strings.Contains(err.Error(), "verification failed") {
+			return errResponse(c, fiber.StatusBadRequest, err.Error())
+		}
+		return errResponse(c, fiber.StatusInternalServerError, "failed to "+action+" worker")
+	}
+}
 
 type WorkerHandler struct {
 	workerService *service.WorkerService
@@ -29,7 +49,6 @@ func (h *WorkerHandler) Create(c fiber.Ctx) error {
 		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
 	}
 
-	// Enforce worker count limit
 	if err := h.quotaService.CheckWorkerLimit(c.Context(), userID); err != nil {
 		if err == service.ErrQuotaWorkersExceeded {
 			return errResponse(c, fiber.StatusForbidden, "maximum workers limit reached, upgrade your plan")
@@ -38,17 +57,12 @@ func (h *WorkerHandler) Create(c fiber.Ctx) error {
 
 	var input service.CreateWorkerInput
 	if err := c.Bind().Body(&input); err != nil {
-		return errResponse(c, fiber.StatusBadRequest, "invalid request body")
+		return errResponse(c, fiber.StatusBadRequest, ERROR_INVALID_REQUEST_BODY)
 	}
 
 	worker, err := h.workerService.Create(c.Context(), userID, input)
 	if err != nil {
-		switch err {
-		case service.ErrWorkerExists:
-			return errResponse(c, fiber.StatusConflict, err.Error())
-		default:
-			return errResponse(c, fiber.StatusInternalServerError, "failed to create worker")
-		}
+		return workerWriteError(c, err, "create")
 	}
 
 	return created(c, worker)
@@ -104,19 +118,12 @@ func (h *WorkerHandler) Update(c fiber.Ctx) error {
 
 	var input service.UpdateWorkerInput
 	if err := c.Bind().Body(&input); err != nil {
-		return errResponse(c, fiber.StatusBadRequest, "invalid request body")
+		return errResponse(c, fiber.StatusBadRequest, ERROR_INVALID_REQUEST_BODY)
 	}
 
 	worker, err := h.workerService.Update(c.Context(), id, userID, input)
 	if err != nil {
-		switch err {
-		case service.ErrWorkerNotFound:
-			return errResponse(c, fiber.StatusNotFound, err.Error())
-		case service.ErrUnauthorized:
-			return errResponse(c, fiber.StatusForbidden, err.Error())
-		default:
-			return errResponse(c, fiber.StatusInternalServerError, "failed to update worker")
-		}
+		return workerWriteError(c, err, "update")
 	}
 
 	return ok(c, worker)
@@ -134,20 +141,12 @@ func (h *WorkerHandler) Delete(c fiber.Ctx) error {
 	}
 
 	if err := h.workerService.Delete(c.Context(), id, userID); err != nil {
-		switch err {
-		case service.ErrWorkerNotFound:
-			return errResponse(c, fiber.StatusNotFound, err.Error())
-		case service.ErrUnauthorized:
-			return errResponse(c, fiber.StatusForbidden, err.Error())
-		default:
-			return errResponse(c, fiber.StatusInternalServerError, "failed to delete worker")
-		}
+		return workerWriteError(c, err, "delete")
 	}
 
 	return ok(c, fiber.Map{"deleted": true})
 }
 
-// ListRevisions handles GET /api/v1/workers/by-name/:name/revisions
 func (h *WorkerHandler) ListRevisions(c fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -161,20 +160,12 @@ func (h *WorkerHandler) ListRevisions(c fiber.Ctx) error {
 
 	revisions, err := h.workerService.ListRevisions(c.Context(), c.Params("name"), userID, limit)
 	if err != nil {
-		switch err {
-		case service.ErrWorkerNotFound:
-			return errResponse(c, fiber.StatusNotFound, err.Error())
-		case service.ErrUnauthorized:
-			return errResponse(c, fiber.StatusForbidden, err.Error())
-		default:
-			return errResponse(c, fiber.StatusInternalServerError, "failed to list revisions")
-		}
+		return workerWriteError(c, err, "list revisions for")
 	}
 
 	return ok(c, revisions)
 }
 
-// Rollback handles POST /api/v1/workers/by-name/:name/rollback
 func (h *WorkerHandler) Rollback(c fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -190,20 +181,12 @@ func (h *WorkerHandler) Rollback(c fiber.Ctx) error {
 
 	worker, err := h.workerService.Rollback(c.Context(), c.Params("name"), userID, input.Version)
 	if err != nil {
-		switch err {
-		case service.ErrWorkerNotFound:
-			return errResponse(c, fiber.StatusNotFound, err.Error())
-		case service.ErrUnauthorized:
-			return errResponse(c, fiber.StatusForbidden, err.Error())
-		case service.ErrRevisionNotFound:
-			return errResponse(c, fiber.StatusNotFound, err.Error())
-		default:
-			return errResponse(c, fiber.StatusInternalServerError, "failed to rollback worker")
-		}
+		return workerWriteError(c, err, "rollback")
 	}
 
 	return ok(c, worker)
 }
+
 func (h *WorkerHandler) UpdateByName(c fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -212,25 +195,17 @@ func (h *WorkerHandler) UpdateByName(c fiber.Ctx) error {
 
 	var input service.UpdateWorkerInput
 	if err := c.Bind().Body(&input); err != nil {
-		return errResponse(c, fiber.StatusBadRequest, "invalid request body")
+		return errResponse(c, fiber.StatusBadRequest, ERROR_INVALID_REQUEST_BODY)
 	}
 
 	worker, err := h.workerService.UpdateByName(c.Context(), c.Params("name"), userID, input)
 	if err != nil {
-		switch err {
-		case service.ErrWorkerNotFound:
-			return errResponse(c, fiber.StatusNotFound, err.Error())
-		case service.ErrUnauthorized:
-			return errResponse(c, fiber.StatusForbidden, err.Error())
-		default:
-			return errResponse(c, fiber.StatusInternalServerError, "failed to update worker")
-		}
+		return workerWriteError(c, err, "update")
 	}
 
 	return ok(c, worker)
 }
 
-// DeleteByName handles DELETE /api/v1/workers/by-name/:name
 func (h *WorkerHandler) DeleteByName(c fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -238,14 +213,7 @@ func (h *WorkerHandler) DeleteByName(c fiber.Ctx) error {
 	}
 
 	if err := h.workerService.DeleteByName(c.Context(), c.Params("name"), userID); err != nil {
-		switch err {
-		case service.ErrWorkerNotFound:
-			return errResponse(c, fiber.StatusNotFound, err.Error())
-		case service.ErrUnauthorized:
-			return errResponse(c, fiber.StatusForbidden, err.Error())
-		default:
-			return errResponse(c, fiber.StatusInternalServerError, "failed to delete worker")
-		}
+		return workerWriteError(c, err, "delete")
 	}
 
 	return ok(c, fiber.Map{"deleted": true})

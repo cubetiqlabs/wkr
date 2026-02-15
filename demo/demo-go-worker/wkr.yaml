@@ -1,0 +1,4 @@
+name: demo-go-worker
+runtime: go
+entry_point: handler
+main: worker.go

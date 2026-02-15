@@ -271,6 +271,61 @@ func (e *SandboxEngine) Shutdown(_ context.Context) error {
 	return nil
 }
 
+// Verify performs a dry-run compile/syntax check without executing the worker.
+func (e *SandboxEngine) Verify(ctx context.Context, code, runtime, entryPoint string) error {
+	switch runtime {
+	case "go":
+		return e.verifyGo(ctx, code, entryPoint)
+	case "javascript", "typescript":
+		return e.verifyJS(ctx, code, entryPoint)
+	default:
+		return fmt.Errorf("unsupported runtime: %s", runtime)
+	}
+}
+
+func (e *SandboxEngine) verifyGo(ctx context.Context, code, entryPoint string) error {
+	src := wrapGoCode(code, entryPoint)
+	srcPath := filepath.Join(e.goCacheDir, fmt.Sprintf("verify_%x.go", sha256.Sum256([]byte(src))))
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		return fmt.Errorf("write source: %w", err)
+	}
+	defer os.Remove(srcPath)
+
+	stderr := e.getBuf()
+	defer e.putBuf(stderr)
+
+	cmd := exec.CommandContext(ctx, "go", "vet", srcPath)
+	cmd.Stderr = stderr
+	cmd.Env = e.hostEnv
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("compilation error:\n%s", stderr.String())
+	}
+	return nil
+}
+
+func (e *SandboxEngine) verifyJS(ctx context.Context, code, entryPoint string) error {
+	wrapped := wrapJSCode(code, entryPoint)
+
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("verify_%x.js", sha256.Sum256([]byte(wrapped))))
+	os.WriteFile(tmpFile, []byte(wrapped), 0o644)
+	defer os.Remove(tmpFile)
+
+	stderr := e.getBuf()
+	defer e.putBuf(stderr)
+
+	var cmd *exec.Cmd
+	if e.jsRuntime == "deno" {
+		cmd = exec.CommandContext(ctx, "deno", "check", "--no-remote", tmpFile)
+	} else {
+		cmd = exec.CommandContext(ctx, "node", "--check", tmpFile)
+	}
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("syntax error:\n%s", stderr.String())
+	}
+	return nil
+}
+
 func buildWorkerPayload(req *ExecutionRequest) []byte {
 	query := make(map[string]string)
 	if req.Query != "" {
@@ -299,22 +354,33 @@ func copyBytes(b []byte) []byte {
 }
 
 func wrapGoCode(code, entryPoint string) string {
+	// Extract user imports and merge with stdlib
+	stdImports := []string{
+		"crypto/md5", "crypto/sha256", "encoding/base64", "encoding/hex",
+		"encoding/json", "fmt", "io", "net/http", "net/url", "os", "strings", "time",
+	}
+	userImports, cleanCode := extractGoImports(code)
+
+	seen := make(map[string]struct{})
+	for _, i := range stdImports {
+		seen[i] = struct{}{}
+	}
+	for _, i := range userImports {
+		if _, ok := seen[i]; !ok {
+			stdImports = append(stdImports, i)
+			seen[i] = struct{}{}
+		}
+	}
+
+	var importBlock strings.Builder
+	for _, i := range stdImports {
+		importBlock.WriteString(fmt.Sprintf("\t%q\n", i))
+	}
+
 	return fmt.Sprintf(`package main
 
 import (
-	"crypto/md5"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"strings"
-	"time"
-)
+%s)
 
 func Env(key string) string { return os.Getenv(key) }
 func EnvOr(key, fallback string) string {
@@ -364,11 +430,46 @@ func main() {
 	})
 	fmt.Print(string(out))
 }
-`, code, entryPoint)
+`, importBlock.String(), cleanCode, entryPoint)
+}
+
+// extractGoImports parses import statements from user code and returns them separately.
+func extractGoImports(code string) (imports []string, clean string) {
+	// Remove "package main" if present
+	code = regexp.MustCompile(`(?m)^\s*package\s+main\s*$`).ReplaceAllString(code, "")
+
+	// Match single import: import "pkg"
+	single := regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"\s*$`)
+	for _, m := range single.FindAllStringSubmatch(code, -1) {
+		imports = append(imports, m[1])
+	}
+	code = single.ReplaceAllString(code, "")
+
+	// Match import block: import ( ... )
+	block := regexp.MustCompile(`(?ms)^\s*import\s*\(\s*(.*?)\s*\)`)
+	for _, m := range block.FindAllStringSubmatch(code, -1) {
+		for _, line := range strings.Split(m[1], "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// Handle aliased imports: alias "pkg"
+			if idx := strings.Index(line, `"`); idx >= 0 {
+				pkg := strings.Trim(line[idx:], `"`)
+				imports = append(imports, pkg)
+			}
+		}
+	}
+	code = block.ReplaceAllString(code, "")
+
+	return imports, strings.TrimSpace(code)
 }
 
 func wrapJSCode(code, entryPoint string) string {
-	return fmt.Sprintf(`const __cubis={_write(s){try{process.stdout.write(s);return}catch(_){}try{Deno.stdout.writeSync(new TextEncoder().encode(s))}catch(_){}}};
+	// Extract import/require statements from user code and prepend them
+	userImports, cleanCode := extractJSImports(code)
+
+	return fmt.Sprintf(`%sconst __cubis={_write(s){try{process.stdout.write(s);return}catch(_){}try{Deno.stdout.writeSync(new TextEncoder().encode(s))}catch(_){}}};
 async function __readStdin(){try{const b=[];for await(const c of Deno.stdin.readable){b.push(c)}return new TextDecoder().decode(await new Blob(b).arrayBuffer())}catch(_){}try{const fs=require("fs");return fs.readFileSync(0,"utf8")}catch(_){}return"{}"}
 function env(k,d){try{const v=Deno.env.get(k);if(v)return v}catch(_){}try{if(process.env[k])return process.env[k]}catch(_){}return d!==undefined?d:""}
 function log(...a){console.error(...a)}
@@ -388,7 +489,27 @@ if(typeof globalThis.fetch==="undefined"){globalThis.fetch=async(u,o)=>{const h=
 %s
 
 ;(async()=>{const payload=jsonParse(await __readStdin(),{});let result=%s(payload);if(result instanceof Promise)result=await result;const output=jsonStringify({status:200,headers:{"Content-Type":"application/json"},body:typeof result==="string"?result:jsonStringify(result)});__cubis._write(output)})();
-`, code, entryPoint)
+`, userImports, cleanCode, entryPoint)
+}
+
+// extractJSImports pulls import/require statements to the top (ES modules require imports at top level).
+func extractJSImports(code string) (imports string, clean string) {
+	var importLines []string
+	var codeLines []string
+	for _, line := range strings.Split(code, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "import{") {
+			importLines = append(importLines, line)
+		} else if strings.HasPrefix(trimmed, "const ") && strings.Contains(trimmed, "require(") {
+			importLines = append(importLines, line)
+		} else {
+			codeLines = append(codeLines, line)
+		}
+	}
+	if len(importLines) > 0 {
+		return strings.Join(importLines, "\n") + "\n", strings.Join(codeLines, "\n")
+	}
+	return "", code
 }
 
 // parseStderrLogs splits stderr into non-empty lines for structured log capture.

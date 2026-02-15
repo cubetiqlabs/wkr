@@ -10,6 +10,7 @@ import (
 	"github.com/cubetiqlabs/wkr/internal/logger"
 	"github.com/cubetiqlabs/wkr/internal/model"
 	"github.com/cubetiqlabs/wkr/internal/repository"
+	"github.com/cubetiqlabs/wkr/internal/runtime"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -26,6 +27,7 @@ type WorkerService struct {
 	invocationRepo *repository.InvocationRepository
 	userRepo       *repository.UserRepository
 	encryptionKey  string
+	engine         *runtime.SandboxEngine
 }
 
 func NewWorkerService(
@@ -34,6 +36,7 @@ func NewWorkerService(
 	invocationRepo *repository.InvocationRepository,
 	userRepo *repository.UserRepository,
 	encryptionKey string,
+	engine *runtime.SandboxEngine,
 ) *WorkerService {
 	return &WorkerService{
 		workerRepo:     workerRepo,
@@ -41,6 +44,7 @@ func NewWorkerService(
 		invocationRepo: invocationRepo,
 		userRepo:       userRepo,
 		encryptionKey:  encryptionKey,
+		engine:         engine,
 	}
 }
 
@@ -66,6 +70,11 @@ func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input Cre
 	entryPoint := "main"
 	if input.EntryPoint != "" {
 		entryPoint = input.EntryPoint
+	}
+
+	// Pre-deploy verification: compile/syntax check
+	if err := s.verifyCode(ctx, input.Code, string(input.Runtime), entryPoint); err != nil {
+		return nil, err
 	}
 
 	// Encrypt env vars at rest
@@ -145,6 +154,14 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 	}
 
 	if input.Code != nil {
+		// Pre-deploy verification: compile/syntax check
+		ep := w.EntryPoint
+		if input.EntryPoint != nil {
+			ep = *input.EntryPoint
+		}
+		if err := s.verifyCode(ctx, *input.Code, string(w.Runtime), ep); err != nil {
+			return nil, err
+		}
 		w.Code = *input.Code
 		w.CodeHash = hashCode(*input.Code)
 		w.Version++
@@ -310,6 +327,16 @@ func (s *WorkerService) Rollback(ctx context.Context, name string, ownerID uuid.
 
 	w.EnvVars = maskEnvVars(w.EnvVars)
 	return w, nil
+}
+
+func (s *WorkerService) verifyCode(ctx context.Context, code, rt, entryPoint string) error {
+	if s.engine == nil {
+		return nil
+	}
+	if err := s.engine.Verify(ctx, code, rt, entryPoint); err != nil {
+		return fmt.Errorf("verification failed: %w", err)
+	}
+	return nil
 }
 
 func (s *WorkerService) RecordInvocation(ctx context.Context, inv *model.Invocation) {

@@ -40,6 +40,10 @@ func cmdDeploy() {
 
 	action := "updated"
 	if err != nil || !resp.Success {
+		if err == nil && resp.Error != "" && resp.Error != "worker not found" {
+			// Real error (verification failed, etc.) — don't fall through to create
+			fatal("deploy failed: " + resp.Error)
+		}
 		// Worker doesn't exist yet — create it
 		resp, err = apiRequest("POST", url, creds.Token, payload)
 		if err != nil {

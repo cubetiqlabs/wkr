@@ -80,11 +80,6 @@ func main() {
 	invocationRepo := repository.NewInvocationRepository(db)
 	quotaRepo := repository.NewQuotaRepository(db)
 
-	// Services
-	authService := service.NewAuthService(userRepo, cfg.Auth.JWTSecret, cfg.Auth.JWTExpiry)
-	workerService := service.NewWorkerService(workerRepo, deploymentRepo, invocationRepo, userRepo, cfg.Runtime.EncryptionKey)
-	quotaService := service.NewQuotaService(quotaRepo, workerRepo)
-
 	// Security
 	validator := security.NewValidator(cfg.Security)
 	auditor := security.NewAuditor(db, cfg.Security.AuditLog, cfg.Edge.NodeID)
@@ -92,6 +87,11 @@ func main() {
 	// Runtime
 	engine := runtime.NewSandboxEngine(cfg.Edge.NodeID)
 	pool := runtime.NewPool(engine, cfg.Runtime, validator, cfg.Edge.NodeID, cfg.Edge.Region)
+
+	// Services
+	authService := service.NewAuthService(userRepo, cfg.Auth.JWTSecret, cfg.Auth.JWTExpiry)
+	workerService := service.NewWorkerService(workerRepo, deploymentRepo, invocationRepo, userRepo, cfg.Runtime.EncryptionKey, engine)
+	quotaService := service.NewQuotaService(quotaRepo, workerRepo)
 
 	// Edge cluster
 	registry := edge.NewRegistry(db, cfg.Edge)
