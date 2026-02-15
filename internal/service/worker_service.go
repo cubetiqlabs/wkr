@@ -207,6 +207,34 @@ func (s *WorkerService) GetByName(ctx context.Context, name string) (*model.Work
 	return w, nil
 }
 
+// GetWorkerByNameForOwner returns a worker by name if owned by the given user.
+func (s *WorkerService) GetWorkerByNameForOwner(ctx context.Context, name string, ownerID uuid.UUID) (*model.Worker, error) {
+	w, err := s.workerRepo.GetByName(ctx, name)
+	if err != nil {
+		return nil, ErrWorkerNotFound
+	}
+	if w.OwnerID != ownerID {
+		return nil, ErrUnauthorized
+	}
+	return w, nil
+}
+
+func (s *WorkerService) UpdateByName(ctx context.Context, name string, ownerID uuid.UUID, input UpdateWorkerInput) (*model.Worker, error) {
+	w, err := s.GetWorkerByNameForOwner(ctx, name, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	return s.Update(ctx, w.ID, ownerID, input)
+}
+
+func (s *WorkerService) DeleteByName(ctx context.Context, name string, ownerID uuid.UUID) error {
+	w, err := s.GetWorkerByNameForOwner(ctx, name, ownerID)
+	if err != nil {
+		return err
+	}
+	return s.workerRepo.Delete(ctx, w.ID)
+}
+
 func (s *WorkerService) RecordInvocation(ctx context.Context, inv *model.Invocation) {
 	_ = s.invocationRepo.Create(ctx, inv)
 }

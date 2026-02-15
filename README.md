@@ -40,6 +40,53 @@ make dev
 make build && make run
 ```
 
+## CLI (wkr-cli)
+
+Deploy functions from your terminal — like Wrangler, but for Cubis Workers.
+
+```bash
+# Build the CLI
+make build-cli
+
+# Or install globally
+make install-cli
+```
+
+### Workflow
+
+```bash
+# 1. Login to your Cubis Workers instance
+wkr-cli login --api-url http://localhost:8080 --email dev@example.com
+
+# 2. Initialize a new worker project
+mkdir my-worker && cd my-worker
+wkr-cli init --name my-worker --runtime javascript
+
+# 3. Edit your worker code (worker.js created automatically)
+# 4. Deploy
+wkr-cli deploy
+
+# 5. Invoke
+wkr-cli invoke my-worker
+
+# 6. List all workers
+wkr-cli list
+
+# 7. Delete
+wkr-cli delete my-worker
+```
+
+### Project Config (wkr.yaml)
+
+```yaml
+name: my-worker
+runtime: javascript
+entry_point: main
+main: worker.js
+env_vars:
+  API_KEY: secret123
+```
+
 ## API Endpoints
 
 ### Auth

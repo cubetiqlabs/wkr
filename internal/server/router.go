@@ -91,6 +91,8 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	workers.Use(middleware.Auth(r.jwtSecret))
 	workers.Post("/", r.workerHandler.Create)
 	workers.Get("/", r.workerHandler.List)
+	workers.Put("/by-name/:name", r.workerHandler.UpdateByName)
+	workers.Delete("/by-name/:name", r.workerHandler.DeleteByName)
 	workers.Get("/:id", r.workerHandler.Get)
 	workers.Put("/:id", r.workerHandler.Update)
 	workers.Delete("/:id", r.workerHandler.Delete)

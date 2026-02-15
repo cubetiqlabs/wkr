@@ -146,3 +146,51 @@ func (h *WorkerHandler) Delete(c fiber.Ctx) error {
 
 	return ok(c, fiber.Map{"deleted": true})
 }
+
+// UpdateByName handles PUT /api/v1/workers/by-name/:name
+func (h *WorkerHandler) UpdateByName(c fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	var input service.UpdateWorkerInput
+	if err := c.Bind().Body(&input); err != nil {
+		return errResponse(c, fiber.StatusBadRequest, "invalid request body")
+	}
+
+	worker, err := h.workerService.UpdateByName(c.Context(), c.Params("name"), userID, input)
+	if err != nil {
+		switch err {
+		case service.ErrWorkerNotFound:
+			return errResponse(c, fiber.StatusNotFound, err.Error())
+		case service.ErrUnauthorized:
+			return errResponse(c, fiber.StatusForbidden, err.Error())
+		default:
+			return errResponse(c, fiber.StatusInternalServerError, "failed to update worker")
+		}
+	}
+
+	return ok(c, worker)
+}
+
+// DeleteByName handles DELETE /api/v1/workers/by-name/:name
+func (h *WorkerHandler) DeleteByName(c fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	if err := h.workerService.DeleteByName(c.Context(), c.Params("name"), userID); err != nil {
+		switch err {
+		case service.ErrWorkerNotFound:
+			return errResponse(c, fiber.StatusNotFound, err.Error())
+		case service.ErrUnauthorized:
+			return errResponse(c, fiber.StatusForbidden, err.Error())
+		default:
+			return errResponse(c, fiber.StatusInternalServerError, "failed to delete worker")
+		}
+	}
+
+	return ok(c, fiber.Map{"deleted": true})
+}
