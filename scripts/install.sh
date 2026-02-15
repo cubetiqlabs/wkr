@@ -29,7 +29,7 @@ fi
 
 # Get latest wkr-cli release tag
 LATEST=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=20" \
-  | grep -o '"tag_name":"wkr-cli-v[^"]*"' | head -1 | cut -d'"' -f4)
+  | grep -o '"tag_name": *"wkr-cli-v[^"]*"' | head -1 | grep -o 'wkr-cli-v[^"]*')
 
 if [ -z "$LATEST" ]; then
   echo "Error: could not find a wkr-cli release"
