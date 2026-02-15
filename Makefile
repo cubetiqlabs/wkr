@@ -1,7 +1,7 @@
 .PHONY: build run dev clean test lint
 
 APP_NAME := wkr
-CLI_NAME := wkr-cli
+CLI_NAME := wkr
 BUILD_DIR := ./bin
 
 build:
