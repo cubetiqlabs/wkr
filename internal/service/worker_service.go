@@ -50,16 +50,17 @@ func NewWorkerService(
 
 type CreateWorkerInput struct {
 	Name       string            `json:"name" validate:"required,min=3,max=255"`
-	Runtime    model.RuntimeType `json:"runtime" validate:"required,oneof=go javascript typescript"`
+	Runtime    model.RuntimeType `json:"runtime" validate:"required,oneof=go javascript typescript python"`
 	EntryPoint string            `json:"entry_point"`
 	Code       string            `json:"code" validate:"required"`
 	EnvVars    model.JSONMap     `json:"env_vars"`
 }
 
 type UpdateWorkerInput struct {
-	Code       *string       `json:"code"`
-	EntryPoint *string       `json:"entry_point"`
-	EnvVars    model.JSONMap `json:"env_vars"`
+	Runtime    *model.RuntimeType `json:"runtime"`
+	Code       *string            `json:"code"`
+	EntryPoint *string            `json:"entry_point"`
+	EnvVars    model.JSONMap      `json:"env_vars"`
 }
 
 func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input CreateWorkerInput) (*model.Worker, error) {
@@ -151,6 +152,10 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 	}
 	if w.OwnerID != ownerID {
 		return nil, ErrUnauthorized
+	}
+
+	if input.Runtime != nil {
+		w.Runtime = *input.Runtime
 	}
 
 	if input.Code != nil {

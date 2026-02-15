@@ -1,0 +1,4 @@
+name: demo-py-worker
+runtime: python
+entry_point: main
+main: worker.py

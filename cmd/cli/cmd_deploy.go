@@ -33,6 +33,7 @@ func cmdDeploy() {
 	// Try update first (PUT), fall back to create (POST)
 	url := creds.APIURL + "/api/v1/workers"
 	resp, err := apiRequest("PUT", url+"/by-name/"+cfg.Name, creds.Token, map[string]interface{}{
+		"runtime":     cfg.Runtime,
 		"code":        string(code),
 		"entry_point": cfg.EntryPoint,
 		"env_vars":    cfg.EnvVars,

@@ -1,6 +1,6 @@
 # Cubis Workers (wkr)
 
-A high-performance, security-first serverless platform supporting **Go** and **JavaScript/TypeScript** runtimes.
+A high-performance, security-first serverless platform supporting **Go**, **JavaScript/TypeScript**, and **Python** runtimes with edge node distribution.
 
 ## Architecture
 
@@ -13,11 +13,12 @@ internal/
   database/          → PostgreSQL connection (GORM)
   model/             → Domain models (User, Worker, Deployment, Invocation)
   repository/        → Data access layer
-  service/           → Business logic (Auth, Worker management)
-  handler/           → HTTP handlers (Fiber v3)
+  service/           → Business logic (Auth, Worker management, LogBus)
+  handler/           → HTTP handlers (Fiber v3) + WebSocket log streaming
   middleware/         → Auth (JWT), rate limiting, security headers
   runtime/           → Sandboxed worker execution engine
   server/            → Fiber app setup and routing
+  edge/              → Edge node registry, routing, and failover
 ```
 
 ## Tech Stack
@@ -28,6 +29,8 @@ internal/
 - **Viper** — YAML configuration management
 - **JWT (HMAC-SHA256)** — zero-dependency authentication
 - **Deno/Node.js** — JavaScript/TypeScript runtime execution
+- **Python 3** — Python runtime execution
+- **WebSocket** — real-time log streaming (gofiber/contrib)
 
 ## Quick Start
 
@@ -63,11 +66,13 @@ make install-cli
 | `whoami`           | Show current authenticated user          |
 | `init`             | Initialize a new worker project          |
 | `deploy`           | Deploy the current worker to the platform|
+| `dev`              | Run worker locally (no deploy needed)    |
 | `list`, `ls`       | List your deployed workers               |
 | `invoke`           | Invoke a worker by name                  |
 | `delete`, `rm`     | Delete a worker by name                  |
 | `revisions`, `rev` | List deployment revisions for a worker   |
 | `rollback`         | Rollback a worker to a specific version  |
+| `logs`             | View invocation logs for a worker        |
 
 ### Workflow
 
@@ -82,28 +87,36 @@ wkr-cli whoami
 wkr-cli init --name my-worker --template json-api
 
 # 4. Or init in current directory
-wkr-cli init --runtime javascript
+wkr-cli init --runtime python
 
 # 5. Edit your worker code, then deploy
 cd my-worker
 wkr-cli deploy
 
-# 6. Invoke
+# 6. Run locally without deploying
+wkr-cli dev --body '{"name":"test"}' --query 'page=1'
+
+# 7. Invoke remotely
 wkr-cli invoke my-worker
 
-# 7. View revision history
+# 8. View logs (recent or real-time)
+wkr-cli logs my-worker
+wkr-cli logs my-worker -f
+wkr-cli logs my-worker -f -v
+
+# 9. View revision history
 wkr-cli revisions my-worker
 
-# 8. Rollback to a previous version
+# 10. Rollback to a previous version
 wkr-cli rollback my-worker --version 1
 
-# 9. List all workers
+# 11. List all workers
 wkr-cli list
 
-# 10. Delete
+# 12. Delete
 wkr-cli delete my-worker
 
-# 11. Logout
+# 13. Logout
 wkr-cli logout
 ```
 
@@ -113,7 +126,7 @@ wkr-cli logout
 wkr-cli init [options]
 
 --name <name>        Worker name (creates subfolder if set, otherwise uses current dir)
---runtime <rt>       Runtime: go, javascript, typescript (default: javascript)
+--runtime <rt>       Runtime: go, javascript, typescript, python (default: javascript)
 --template <tpl>     Use a prebuilt template
 --list-templates     List available templates
 ```
@@ -125,6 +138,7 @@ wkr-cli init [options]
 | `hello-js` | javascript | Basic hello world          |
 | `hello-ts` | typescript | Basic hello world (typed)  |
 | `hello-go` | go         | Basic hello world          |
+| `hello-py` | python     | Basic hello world          |
 | `json-api` | javascript | JSON request/response API  |
 | `cron`     | javascript | Cron-style scheduled task  |
 | `proxy`    | javascript | Request proxy/forwarder    |
@@ -135,15 +149,60 @@ wkr-cli init --list-templates
 
 # Init with a template
 wkr-cli init --name my-api --template json-api
+wkr-cli init --name my-py --template hello-py
 ```
+
+### Local Development
+
+Run workers locally without deploying:
+
+```bash
+wkr-cli dev                                          # GET /
+wkr-cli dev --method POST --body '{"name":"test"}'   # POST with body
+wkr-cli dev --query 'page=2&sort=name'               # with query params
+wkr-cli dev --path '/v1/users'                       # with sub-path
+```
+
+### Logs
+
+View invocation logs (recent history or real-time streaming):
+
+```bash
+wkr-cli logs my-worker              # last 20 logs
+wkr-cli logs my-worker --limit 50   # last 50 logs
+wkr-cli logs my-worker -f           # follow in real-time (WebSocket)
+wkr-cli logs my-worker -f -v        # follow with verbose details
+```
+
+Output:
+```
+15:30:05 ✓ 200 GET / 12ms [a1b2c3d4]
+15:30:12 ✗ 500 POST /v1/users 3ms [e5f6a7b8]
+  error: NameError: name 'x' is not defined
+  log: processing request...
+  --- stack trace ---
+  Traceback (most recent call last):
+    File "worker.py", line 5, in main
+  NameError: name 'x' is not defined
+  ---
+```
+
+With `-v` (verbose):
+```
+15:30:05 ✓ 200 GET / 12ms [a1b2c3d4]
+  node=edge-us-1 region=us-east-1 ip=203.0.113.42 in=45B out=128B
+  ua=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)
+```
+
+The `-f` flag uses WebSocket with auto-reconnect — survives network blips and server restarts.
 
 ### Project Config (wkr.yaml)
 
 ```yaml
 name: my-worker
-runtime: javascript
+runtime: python
 entry_point: main
-main: worker.js
+main: worker.py
 env_vars:
   API_KEY: secret123
 ```
@@ -163,6 +222,18 @@ wkr-cli rollback my-worker --version 1
 # ✓ Rolled back my-worker to v1 (now at v4, active)
 ```
 
+## Nested Routes
+
+Workers support sub-paths. The first path segment is the worker name, the rest is passed as `req.path`:
+
+```
+GET /api/v1/invoke/my-api/v1/users?page=2
+→ worker: my-api, path: /v1/users, query: {page: "2"}
+
+POST /api/v1/invoke/@dev/my-api/v1/users/123
+→ worker: my-api, path: /v1/users/123 (scoped to @dev)
+```
+
 ## API Endpoints
 
 ### Auth
@@ -174,29 +245,37 @@ wkr-cli rollback my-worker --version 1
 
 ### Workers (requires JWT)
 
-| Method | Path                                    | Description                  |
-| ------ | --------------------------------------- | ---------------------------- |
-| POST   | `/api/v1/workers`                       | Create a worker              |
-| GET    | `/api/v1/workers`                       | List your workers            |
-| GET    | `/api/v1/workers/:id`                   | Get worker details           |
-| PUT    | `/api/v1/workers/:id`                   | Update a worker              |
-| DELETE | `/api/v1/workers/:id`                   | Delete a worker              |
-| PUT    | `/api/v1/workers/by-name/:name`         | Update a worker by name      |
-| DELETE | `/api/v1/workers/by-name/:name`         | Delete a worker by name      |
-| GET    | `/api/v1/workers/by-name/:name/revisions` | List deployment revisions  |
-| POST   | `/api/v1/workers/by-name/:name/rollback`  | Rollback to a version      |
+| Method | Path                                      | Description                  |
+| ------ | ----------------------------------------- | ---------------------------- |
+| POST   | `/api/v1/workers`                         | Create a worker              |
+| GET    | `/api/v1/workers`                         | List your workers            |
+| GET    | `/api/v1/workers/:id`                     | Get worker details           |
+| PUT    | `/api/v1/workers/:id`                     | Update a worker              |
+| DELETE | `/api/v1/workers/:id`                     | Delete a worker              |
+| PUT    | `/api/v1/workers/by-name/:name`           | Update a worker by name      |
+| DELETE | `/api/v1/workers/by-name/:name`           | Delete a worker by name      |
+| GET    | `/api/v1/workers/by-name/:name/revisions` | List deployment revisions    |
+| POST   | `/api/v1/workers/by-name/:name/rollback`  | Rollback to a version        |
+| GET    | `/api/v1/workers/by-name/:name/logs`      | List invocation logs         |
 
-### Invoke (public, rate-limited)
+### Log Streaming (WebSocket)
 
-| Method   | Path                              | Description                        |
-| -------- | --------------------------------- | ---------------------------------- |
-| POST/GET | `/api/v1/invoke/@:username/:name` | Execute a worker (scoped by user)  |
-| POST/GET | `/api/v1/invoke/:name`            | Execute a worker (legacy, global)  |
+| Path                            | Description                          |
+| ------------------------------- | ------------------------------------ |
+| `/api/v1/ws/logs/:name?token=T` | Real-time log stream via WebSocket  |
+
+### Invoke (public, rate-limited, supports nested routes)
+
+| Method   | Path                                | Description                        |
+| -------- | ----------------------------------- | ---------------------------------- |
+| POST/GET | `/api/v1/invoke/@:username/:name/*` | Execute a worker (scoped by user)  |
+| POST/GET | `/api/v1/invoke/:name/*`            | Execute a worker (legacy, global)  |
 
 Worker names are scoped per-user. Two different users can have workers with the same name. The scoped invoke URL uses the `@username` prefix:
 
 ```
 https://your-instance.com/api/v1/invoke/@dev/hello-world
+https://your-instance.com/api/v1/invoke/@dev/my-api/v1/users?page=2
 ```
 
 ### Health
@@ -205,6 +284,59 @@ https://your-instance.com/api/v1/invoke/@dev/hello-world
 | ------ | --------- | --------------- |
 | GET    | `/health` | Health check    |
 | GET    | `/ready`  | Readiness probe |
+
+## Runtimes
+
+### JavaScript / TypeScript
+
+```javascript
+function main(req) {
+  const name = req.query.name || "world";
+  return { message: `Hello, ${name}!` };
+}
+```
+
+Built-in helpers: `env(key, default)`, `log(...)`, `fetch()`, `btoa()`, `atob()`, `sha256()`, `md5()`, `uuid()`, `sleep(ms)`, `jsonParse()`, `jsonStringify()`.
+
+### Go
+
+```go
+package main
+
+func main(req map[string]interface{}) map[string]interface{} {
+    return map[string]interface{}{
+        "message": "Hello from Go!",
+    }
+}
+```
+
+Built-in helpers: `Log(...)`, `Env(key)`.
+
+### Python
+
+```python
+def main(req):
+    name = req.get("query", {}).get("name", "world")
+    return {"message": f"Hello, {name}!"}
+```
+
+Built-in helpers: `env(key, default)`, `log(...)`.
+
+All runtimes receive a request object with: `method`, `path`, `query` (object), `headers` (object), `body` (string).
+
+## Invocation Logs
+
+Every invocation is recorded with:
+
+- Request ID, status code, duration
+- HTTP method, path, query string
+- Client IP, user-agent
+- Node ID, region (which edge node executed it)
+- Request/response bytes
+- Worker stderr logs (console.log / log() output)
+- Error message and stack trace (on crash/panic)
+
+Logs from edge-executed workers are pushed back to the origin node for unified streaming.
 
 ## Usage Example
 
@@ -219,22 +351,22 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"dev@example.com","password":"securepass"}' | jq -r '.data.token')
 
-# Create a JavaScript worker
+# Create a Python worker
 curl -X POST http://localhost:8080/api/v1/workers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "hello-world",
-    "runtime": "javascript",
-    "code": "function main(req) { return { message: \"Hello from Cubis Workers!\" }; }",
+    "runtime": "python",
+    "code": "def main(req):\n    return {\"message\": \"Hello from Python!\"}",
     "entry_point": "main"
   }'
 
-# Invoke the worker (scoped)
+# Invoke the worker
 curl http://localhost:8080/api/v1/invoke/@dev/hello-world
 
-# Invoke the worker (legacy)
-curl http://localhost:8080/api/v1/invoke/hello-world
+# Invoke with nested route
+curl http://localhost:8080/api/v1/invoke/@dev/hello-world/v1/greet?name=Kiro
 ```
 
 ## Security Features
@@ -246,10 +378,20 @@ curl http://localhost:8080/api/v1/invoke/hello-world
 - Security headers (HSTS, CSP, X-Frame-Options, etc.)
 - Sandboxed worker execution with timeout enforcement
 - Concurrency-limited execution pool
+- Pre-deploy code verification (compile/syntax check)
 - SQL injection prevention via GORM parameterized queries
 - Input validation on all endpoints
 - Encrypted environment variables at rest
 - Graceful shutdown with resource cleanup
+- Panic-safe invocation logging (defer + recover)
+
+## Edge Cluster
+
+- Multi-node edge distribution with automatic load balancing
+- Heartbeat-based health monitoring
+- Failover routing when nodes go down
+- Log forwarding from edge nodes back to origin for unified streaming
+- Internal secret-authenticated inter-node communication
 
 ## Configuration
 

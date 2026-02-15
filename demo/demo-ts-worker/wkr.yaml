@@ -1,0 +1,4 @@
+name: demo-ts-worker
+runtime: typescript
+entry_point: main
+main: worker.ts

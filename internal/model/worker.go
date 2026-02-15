@@ -26,7 +26,7 @@ func (b *Base) BeforeCreate(tx *gorm.DB) error {
 type Worker struct {
 	Base
 	Name        string        `gorm:"size:255;not null;uniqueIndex:idx_owner_worker_name" json:"name" validate:"required,min=3,max=255"`
-	Runtime     RuntimeType   `gorm:"size:20;not null" json:"runtime" validate:"required,oneof=go javascript typescript"`
+	Runtime     RuntimeType   `gorm:"size:20;not null" json:"runtime" validate:"required,oneof=go javascript typescript python"`
 	EntryPoint  string        `gorm:"size:255;not null;default:'main'" json:"entry_point"`
 	Code        string        `gorm:"type:text;not null" json:"code" validate:"required"`
 	CodeHash    string        `gorm:"size:64;not null" json:"code_hash"`
@@ -45,6 +45,7 @@ const (
 	RuntimeGo         RuntimeType = "go"
 	RuntimeJavaScript RuntimeType = "javascript"
 	RuntimeTypeScript RuntimeType = "typescript"
+	RuntimePython     RuntimeType = "python"
 )
 
 type WorkerStatus string

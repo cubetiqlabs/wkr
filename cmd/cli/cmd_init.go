@@ -62,6 +62,9 @@ func main(req map[string]interface{}) map[string]interface{} {
   };
 }
 `},
+	"hello-py": {"python", `def main(req):
+    return {"message": "Hello from Cubis Workers!"}
+`},
 }
 
 func cmdInit() {
@@ -110,7 +113,7 @@ func cmdInit() {
 		*name = filepath.Base(mustCwd())
 	}
 
-	ext := map[string]string{"go": ".go", "javascript": ".js", "typescript": ".ts"}
+	ext := map[string]string{"go": ".go", "javascript": ".js", "typescript": ".ts", "python": ".py"}
 	mainFile := "worker" + ext[*runtime]
 
 	cfg := WorkerConfig{
@@ -162,6 +165,8 @@ func scaffold(runtime string) string {
 		return templates["hello-go"].code
 	case "typescript":
 		return templates["hello-ts"].code
+	case "python":
+		return templates["hello-py"].code
 	default:
 		return templates["hello-js"].code
 	}

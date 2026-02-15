@@ -91,6 +91,8 @@ func (e *SandboxEngine) Execute(ctx context.Context, req *ExecutionRequest) (*Ex
 		return e.executeGo(ctx, req)
 	case "javascript", "typescript":
 		return e.executeJS(ctx, req)
+	case "python":
+		return e.executePython(ctx, req)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedRuntime, req.Runtime)
 	}
@@ -276,8 +278,12 @@ func (e *SandboxEngine) Verify(ctx context.Context, code, runtime, entryPoint st
 	switch runtime {
 	case "go":
 		return e.verifyGo(ctx, code, entryPoint)
-	case "javascript", "typescript":
-		return e.verifyJS(ctx, code, entryPoint)
+	case "javascript":
+		return e.verifyJS(ctx, code, "js")
+	case "typescript":
+		return e.verifyJS(ctx, code, "ts")
+	case "python":
+		return e.verifyPython(ctx, code)
 	default:
 		return fmt.Errorf("unsupported runtime: %s", runtime)
 	}
@@ -303,11 +309,14 @@ func (e *SandboxEngine) verifyGo(ctx context.Context, code, entryPoint string) e
 	return nil
 }
 
-func (e *SandboxEngine) verifyJS(ctx context.Context, code, entryPoint string) error {
-	wrapped := wrapJSCode(code, entryPoint)
+func (e *SandboxEngine) verifyJS(ctx context.Context, code, ext string) error {
+	// node --check can't parse TypeScript — skip verification when Deno isn't available
+	if ext == "ts" && e.jsRuntime != "deno" {
+		return nil
+	}
 
-	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("verify_%x.js", sha256.Sum256([]byte(wrapped))))
-	os.WriteFile(tmpFile, []byte(wrapped), 0o644)
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("verify_%x.%s", sha256.Sum256([]byte(code)), ext))
+	os.WriteFile(tmpFile, []byte(code), 0o644)
 	defer os.Remove(tmpFile)
 
 	stderr := e.getBuf()
@@ -324,6 +333,110 @@ func (e *SandboxEngine) verifyJS(ctx context.Context, code, entryPoint string) e
 		return fmt.Errorf("syntax error:\n%s", stderr.String())
 	}
 	return nil
+}
+
+// ---------- Python Runtime ----------
+
+func (e *SandboxEngine) verifyPython(ctx context.Context, code string) error {
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("verify_%x.py", sha256.Sum256([]byte(code))))
+	os.WriteFile(tmpFile, []byte(code), 0o644)
+	defer os.Remove(tmpFile)
+
+	stderr := e.getBuf()
+	defer e.putBuf(stderr)
+
+	cmd := exec.CommandContext(ctx, "python3", "-m", "py_compile", tmpFile)
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("syntax error:\n%s", stderr.String())
+	}
+	return nil
+}
+
+func (e *SandboxEngine) executePython(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
+	payload := buildWorkerPayload(req)
+	code := wrapPyCode(req.Code, req.EntryPoint)
+
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("wkr_%x.py", sha256.Sum256([]byte(code))))
+	os.WriteFile(tmpFile, []byte(code), 0o644)
+	defer os.Remove(tmpFile)
+
+	env := e.buildWorkerEnv(req.EnvVars)
+
+	stdout := e.getBuf()
+	stderr := e.getBuf()
+	defer e.putBuf(stdout)
+	defer e.putBuf(stderr)
+
+	cmd := exec.CommandContext(ctx, "python3", tmpFile)
+	cmd.Stdin = bytes.NewReader(payload)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Env = env
+
+	start := time.Now()
+	err := cmd.Run()
+	duration := time.Since(start)
+	logs := parseStderrLogs(stderr)
+
+	if ctx.Err() != nil {
+		return &ExecutionResult{
+			StatusCode: 504,
+			Duration:   duration,
+			Error:      "execution timed out",
+			Logs:       logs,
+		}, ErrTimeout
+	}
+
+	if err != nil {
+		errMsg := extractRuntimeError(stderr.String(), "python")
+		return &ExecutionResult{
+			StatusCode: 500,
+			Duration:   duration,
+			Error:      errMsg,
+			Logs:       logs,
+		}, nil
+	}
+
+	result, parseErr := parseWorkerOutput(copyBytes(stdout.Bytes()), duration)
+	result.Logs = logs
+	return result, parseErr
+}
+
+func wrapPyCode(code, entryPoint string) string {
+	return fmt.Sprintf(`import sys, json, os, traceback
+
+# Redirect print() to stderr so it doesn't pollute the JSON response on stdout
+print = lambda *a, **kw: __builtins__.__import__('builtins').print(*a, **{**kw, 'file': kw.get('file', sys.stderr)})
+
+def env(key, default=""):
+    return os.environ.get(key, default)
+
+def log(*args):
+    __builtins__.__import__('builtins').print(*args, file=sys.stderr)
+
+%s
+
+if __name__ == "__main__":
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+        result = %s(payload)
+        if isinstance(result, dict):
+            body = result.get("body", json.dumps(result))
+            status = result.get("status", 200)
+            headers = result.get("headers", {"Content-Type": "application/json"})
+            if not isinstance(body, str):
+                body = json.dumps(body)
+        else:
+            body = json.dumps(result) if result is not None else ""
+            status = 200
+            headers = {"Content-Type": "application/json"}
+        output = json.dumps({"status": status, "headers": headers, "body": body})
+        sys.stdout.write(output)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+`, code, entryPoint)
 }
 
 func buildWorkerPayload(req *ExecutionRequest) []byte {
@@ -476,6 +589,7 @@ func wrapJSCode(code, entryPoint string) string {
 	userImports, cleanCode := extractJSImports(code)
 
 	return fmt.Sprintf(`%sconst __cubis={_write(s){try{process.stdout.write(s);return}catch(_){}try{Deno.stdout.writeSync(new TextEncoder().encode(s))}catch(_){}}};
+try{console.log=console.warn=console.info=console.debug=(...a)=>console.error(...a)}catch(_){}
 async function __readStdin(){try{const b=[];for await(const c of Deno.stdin.readable){b.push(c)}return new TextDecoder().decode(await new Blob(b).arrayBuffer())}catch(_){}try{const fs=require("fs");return fs.readFileSync(0,"utf8")}catch(_){}return"{}"}
 function env(k,d){try{const v=Deno.env.get(k);if(v)return v}catch(_){}try{if(process.env[k])return process.env[k]}catch(_){}return d!==undefined?d:""}
 function log(...a){console.error(...a)}
@@ -568,6 +682,18 @@ func extractRuntimeError(stderr, rt string) string {
 			l = strings.TrimSpace(l)
 			if strings.HasPrefix(l, "panic:") || strings.Contains(l, "runtime error:") {
 				return l
+			}
+		}
+	}
+
+	// For Python: look for the last "Error:" or "Traceback" block
+	if rt == "python" {
+		for i := len(lines) - 1; i >= 0; i-- {
+			l := strings.TrimSpace(lines[i])
+			for _, suffix := range []string{"Error:", "Exception:"} {
+				if strings.Contains(l, suffix) {
+					return l
+				}
 			}
 		}
 	}

@@ -49,6 +49,8 @@ func cmdDev() {
 		out, err = runGoLocal(string(code), cfg.EntryPoint, cfg.EnvVars, payload)
 	case "javascript", "typescript":
 		out, err = runJSLocal(string(code), cfg.EntryPoint, cfg.EnvVars, payload)
+	case "python":
+		out, err = runPyLocal(string(code), cfg.EntryPoint, cfg.EnvVars, payload)
 	default:
 		fatal("unsupported runtime: " + cfg.Runtime)
 	}
@@ -75,6 +77,7 @@ func runJSLocal(code, entryPoint string, envVars map[string]string, payload []by
 
 	// Minimal wrapper: read stdin, call entrypoint, write result
 	wrapped := fmt.Sprintf(`
+try{console.log=console.warn=console.info=console.debug=(...a)=>console.error(...a)}catch(_){}
 async function __readStdin(){try{const b=[];for await(const c of Deno.stdin.readable){b.push(c)}return new TextDecoder().decode(await new Blob(b).arrayBuffer())}catch(_){}try{const fs=require("fs");return fs.readFileSync(0,"utf8")}catch(_){}return"{}"}
 function env(k,d){try{const v=Deno.env.get(k);if(v)return v}catch(_){}try{if(process.env[k])return process.env[k]}catch(_){}return d!==undefined?d:""}
 function log(...a){console.error(...a)}
@@ -230,4 +233,48 @@ func buildLocalEnv(envVars map[string]string) []string {
 		env = append(env, k+"="+v)
 	}
 	return env
+}
+
+func runPyLocal(code, entryPoint string, envVars map[string]string, payload []byte) ([]byte, error) {
+	wrapped := fmt.Sprintf(`import sys, json, os
+
+print = lambda *a, **kw: __builtins__.__import__('builtins').print(*a, **{**kw, 'file': kw.get('file', sys.stderr)})
+
+def env(key, default=""):
+    return os.environ.get(key, default)
+
+def log(*args):
+    __builtins__.__import__('builtins').print(*args, file=sys.stderr)
+
+%s
+
+payload = json.loads(sys.stdin.read() or "{}")
+result = %s(payload)
+output = json.dumps(result)
+sys.stdout.write(output)
+`, code, entryPoint)
+
+	tmp := filepath.Join(os.TempDir(), "wkr-dev.py")
+	os.WriteFile(tmp, []byte(wrapped), 0644)
+	defer os.Remove(tmp)
+
+	cmd := exec.Command("python3", tmp)
+	cmd.Stdin = bytes.NewReader(payload)
+	cmd.Env = buildLocalEnv(envVars)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("%s", stderr.String())
+		}
+		return nil, err
+	}
+
+	if stderr.Len() > 0 {
+		fmt.Fprint(os.Stderr, stderr.String())
+	}
+	return stdout.Bytes(), nil
 }

@@ -9,9 +9,9 @@ COPY internal ./internal
 COPY cmd ./cmd
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /wkr ./cmd/server
 
-# Runtime stage — needs Go for compiling Go workers, Deno for JS/TS workers
+# Runtime stage — needs Go for compiling Go workers, Deno for JS/TS workers, Python for Python workers
 FROM golang:1.25-alpine
-RUN apk add --no-cache ca-certificates tzdata deno \
+RUN apk add --no-cache ca-certificates tzdata deno python3 \
     && addgroup -S cubis && adduser -S cubis -G cubis \
     && mkdir -p /tmp/cubis-cache && chown cubis:cubis /tmp/cubis-cache
 WORKDIR /app
