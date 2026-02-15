@@ -8,9 +8,10 @@ import (
 )
 
 type Credentials struct {
-	APIURL string `json:"api_url"`
-	Token  string `json:"token"`
-	Email  string `json:"email"`
+	APIURL   string `json:"api_url"`
+	Token    string `json:"token"`
+	Email    string `json:"email"`
+	Username string `json:"username"`
 }
 
 func credentialsPath() string {

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/cubetiqlabs/wkr/internal/model"
@@ -62,6 +64,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthR
 
 	user := &model.User{
 		Email:    input.Email,
+		Username: s.uniqueUsername(ctx, input.Email),
 		Name:     input.Name,
 		Password: string(hashed),
 		Role:     model.RoleUser,
@@ -110,4 +113,29 @@ func (s *AuthService) GetUser(ctx context.Context, id uuid.UUID) (*model.User, e
 func HashAPIKey(key string) string {
 	h := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("%x", h)
+}
+
+var nonAlphaNum = regexp.MustCompile(`[^a-z0-9-]`)
+
+// deriveUsername generates a URL-safe username from an email address.
+func deriveUsername(email string) string {
+	local := strings.Split(strings.ToLower(email), "@")[0]
+	username := nonAlphaNum.ReplaceAllString(local, "-")
+	username = strings.Trim(username, "-")
+	if username == "" {
+		username = "user"
+	}
+	return username
+}
+
+// uniqueUsername derives a username from email prefix, appending a numeric suffix on collision.
+func (s *AuthService) uniqueUsername(ctx context.Context, email string) string {
+	base := deriveUsername(email)
+	candidate := base
+	for i := 1; ; i++ {
+		if _, err := s.userRepo.GetByUsername(ctx, candidate); err != nil {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
 }

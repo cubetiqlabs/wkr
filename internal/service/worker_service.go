@@ -24,6 +24,7 @@ type WorkerService struct {
 	workerRepo     *repository.WorkerRepository
 	deploymentRepo *repository.DeploymentRepository
 	invocationRepo *repository.InvocationRepository
+	userRepo       *repository.UserRepository
 	encryptionKey  string
 }
 
@@ -31,12 +32,14 @@ func NewWorkerService(
 	workerRepo *repository.WorkerRepository,
 	deploymentRepo *repository.DeploymentRepository,
 	invocationRepo *repository.InvocationRepository,
+	userRepo *repository.UserRepository,
 	encryptionKey string,
 ) *WorkerService {
 	return &WorkerService{
 		workerRepo:     workerRepo,
 		deploymentRepo: deploymentRepo,
 		invocationRepo: invocationRepo,
+		userRepo:       userRepo,
 		encryptionKey:  encryptionKey,
 	}
 }
@@ -56,7 +59,7 @@ type UpdateWorkerInput struct {
 }
 
 func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input CreateWorkerInput) (*model.Worker, error) {
-	if existing, _ := s.workerRepo.GetByName(ctx, input.Name); existing != nil {
+	if existing, _ := s.workerRepo.GetByOwnerAndName(ctx, ownerID, input.Name); existing != nil {
 		return nil, ErrWorkerExists
 	}
 
@@ -94,7 +97,10 @@ func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input Cre
 	dep := &model.Deployment{
 		WorkerID:   w.ID,
 		Version:    1,
+		Code:       input.Code,
+		EntryPoint: entryPoint,
 		CodeHash:   w.CodeHash,
+		EnvVars:    envVars,
 		Status:     model.DeploymentActive,
 		DeployedBy: ownerID,
 	}
@@ -166,7 +172,10 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 		dep := &model.Deployment{
 			WorkerID:   w.ID,
 			Version:    w.Version,
+			Code:       w.Code,
+			EntryPoint: w.EntryPoint,
 			CodeHash:   w.CodeHash,
+			EnvVars:    w.EnvVars,
 			Status:     model.DeploymentActive,
 			DeployedBy: ownerID,
 		}
@@ -191,12 +200,29 @@ func (s *WorkerService) Delete(ctx context.Context, id, ownerID uuid.UUID) error
 }
 
 // GetByName returns a worker with decrypted env vars (for execution).
+// Searches globally — used for legacy unscoped invocation.
 func (s *WorkerService) GetByName(ctx context.Context, name string) (*model.Worker, error) {
 	w, err := s.workerRepo.GetActiveByName(ctx, name)
 	if err != nil {
 		return nil, ErrWorkerNotFound
 	}
-	// Decrypt env vars for runtime execution
+	return s.decryptWorkerEnv(w)
+}
+
+// GetByUsernameAndName returns a worker scoped to a username (for invocation).
+func (s *WorkerService) GetByUsernameAndName(ctx context.Context, username, name string) (*model.Worker, error) {
+	user, err := s.userRepo.GetByUsername(ctx, username)
+	if err != nil {
+		return nil, ErrWorkerNotFound
+	}
+	w, err := s.workerRepo.GetActiveByOwnerAndName(ctx, user.ID, name)
+	if err != nil {
+		return nil, ErrWorkerNotFound
+	}
+	return s.decryptWorkerEnv(w)
+}
+
+func (s *WorkerService) decryptWorkerEnv(w *model.Worker) (*model.Worker, error) {
 	if len(w.EnvVars) > 0 && s.encryptionKey != "" {
 		decrypted, err := crypto.DecryptMap(w.EnvVars, s.encryptionKey)
 		if err != nil {
@@ -209,12 +235,9 @@ func (s *WorkerService) GetByName(ctx context.Context, name string) (*model.Work
 
 // GetWorkerByNameForOwner returns a worker by name if owned by the given user.
 func (s *WorkerService) GetWorkerByNameForOwner(ctx context.Context, name string, ownerID uuid.UUID) (*model.Worker, error) {
-	w, err := s.workerRepo.GetByName(ctx, name)
+	w, err := s.workerRepo.GetByOwnerAndName(ctx, ownerID, name)
 	if err != nil {
 		return nil, ErrWorkerNotFound
-	}
-	if w.OwnerID != ownerID {
-		return nil, ErrUnauthorized
 	}
 	return w, nil
 }
@@ -233,6 +256,60 @@ func (s *WorkerService) DeleteByName(ctx context.Context, name string, ownerID u
 		return err
 	}
 	return s.workerRepo.Delete(ctx, w.ID)
+}
+
+func (s *WorkerService) ListRevisions(ctx context.Context, name string, ownerID uuid.UUID, limit int) ([]model.Deployment, error) {
+	w, err := s.GetWorkerByNameForOwner(ctx, name, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	return s.deploymentRepo.ListByWorker(ctx, w.ID, limit)
+}
+
+var ErrRevisionNotFound = errors.New("revision not found")
+
+func (s *WorkerService) Rollback(ctx context.Context, name string, ownerID uuid.UUID, targetVersion int) (*model.Worker, error) {
+	w, err := s.GetWorkerByNameForOwner(ctx, name, ownerID)
+	if err != nil {
+		return nil, err
+	}
+
+	dep, err := s.deploymentRepo.GetByVersion(ctx, w.ID, targetVersion)
+	if err != nil {
+		return nil, ErrRevisionNotFound
+	}
+
+	// Apply the snapshot from that revision
+	w.Code = dep.Code
+	w.EntryPoint = dep.EntryPoint
+	w.CodeHash = dep.CodeHash
+	w.EnvVars = dep.EnvVars
+	w.Version++
+
+	if err := s.workerRepo.Update(ctx, w); err != nil {
+		return nil, fmt.Errorf("failed to rollback worker: %w", err)
+	}
+
+	// Mark old deployment as rolled back
+	s.deploymentRepo.UpdateStatus(ctx, dep.ID, model.DeploymentRolledBack)
+
+	// Record new deployment for the rollback
+	newDep := &model.Deployment{
+		WorkerID:   w.ID,
+		Version:    w.Version,
+		Code:       w.Code,
+		EntryPoint: w.EntryPoint,
+		CodeHash:   w.CodeHash,
+		EnvVars:    w.EnvVars,
+		Status:     model.DeploymentActive,
+		DeployedBy: ownerID,
+	}
+	if err := s.deploymentRepo.Create(ctx, newDep); err != nil {
+		logger.Error("failed to record rollback deployment", zap.Error(err))
+	}
+
+	w.EnvVars = maskEnvVars(w.EnvVars)
+	return w, nil
 }
 
 func (s *WorkerService) RecordInvocation(ctx context.Context, inv *model.Invocation) {

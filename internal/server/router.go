@@ -93,6 +93,8 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	workers.Get("/", r.workerHandler.List)
 	workers.Put("/by-name/:name", r.workerHandler.UpdateByName)
 	workers.Delete("/by-name/:name", r.workerHandler.DeleteByName)
+	workers.Get("/by-name/:name/revisions", r.workerHandler.ListRevisions)
+	workers.Post("/by-name/:name/rollback", r.workerHandler.Rollback)
 	workers.Get("/:id", r.workerHandler.Get)
 	workers.Put("/:id", r.workerHandler.Update)
 	workers.Delete("/:id", r.workerHandler.Delete)
@@ -111,6 +113,8 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	// Invoke (public, rate-limited)
 	invoke := v1.Group("/invoke")
 	invoke.Use(limiter.Handler())
+	invoke.Post("/@:username/:name", r.invokeHandler.Invoke)
+	invoke.Get("/@:username/:name", r.invokeHandler.Invoke)
 	invoke.Post("/:name", r.invokeHandler.Invoke)
 	invoke.Get("/:name", r.invokeHandler.Invoke)
 

@@ -59,5 +59,9 @@ func cmdDeploy() {
 	json.Unmarshal(resp.Data, &worker)
 
 	fmt.Printf("✓ Worker %s %s (v%d, %s)\n", worker.Name, action, worker.Version, worker.Status)
-	fmt.Printf("→ Invoke: %s/api/v1/invoke/%s\n", creds.APIURL, cfg.Name)
+	if creds.Username != "" {
+		fmt.Printf("→ Invoke: %s/api/v1/invoke/@%s/%s\n", creds.APIURL, creds.Username, cfg.Name)
+	} else {
+		fmt.Printf("→ Invoke: %s/api/v1/invoke/%s\n", creds.APIURL, cfg.Name)
+	}
 }

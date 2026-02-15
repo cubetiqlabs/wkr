@@ -42,3 +42,12 @@ func (r *DeploymentRepository) ListByWorker(ctx context.Context, workerID uuid.U
 func (r *DeploymentRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.DeploymentStatus) error {
 	return r.db.WithContext(ctx).Model(&model.Deployment{}).Where("id = ?", id).Update("status", status).Error
 }
+
+func (r *DeploymentRepository) GetByVersion(ctx context.Context, workerID uuid.UUID, version int) (*model.Deployment, error) {
+	var d model.Deployment
+	err := r.db.WithContext(ctx).First(&d, "worker_id = ? AND version = ?", workerID, version).Error
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}

@@ -61,7 +61,15 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		return errResponse(c, fiber.StatusBadRequest, "worker name required")
 	}
 
-	worker, err := h.workerService.GetByName(c.Context(), name)
+	// Scoped invocation: /invoke/@username/worker-name
+	username := c.Params("username")
+	var worker *model.Worker
+	var err error
+	if username != "" {
+		worker, err = h.workerService.GetByUsernameAndName(c.Context(), username, name)
+	} else {
+		worker, err = h.workerService.GetByName(c.Context(), name)
+	}
 	if err != nil {
 		return errResponse(c, fiber.StatusNotFound, "worker not found")
 	}

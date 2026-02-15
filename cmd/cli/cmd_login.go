@@ -50,13 +50,17 @@ func cmdLogin() {
 
 	var data struct {
 		Token string `json:"token"`
+		User  struct {
+			Username string `json:"username"`
+		} `json:"user"`
 	}
 	json.Unmarshal(resp.Data, &data)
 
 	if err := saveCredentials(&Credentials{
-		APIURL: strings.TrimRight(*apiURL, "/"),
-		Token:  data.Token,
-		Email:  *email,
+		APIURL:   strings.TrimRight(*apiURL, "/"),
+		Token:    data.Token,
+		Email:    *email,
+		Username: data.User.Username,
 	}); err != nil {
 		fatal("failed to save credentials: " + err.Error())
 	}

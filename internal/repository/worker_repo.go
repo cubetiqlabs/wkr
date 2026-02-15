@@ -29,9 +29,20 @@ func (r *WorkerRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Wo
 	return &w, nil
 }
 
+// GetByName finds a worker by name (global, first match). Used for edge sync.
 func (r *WorkerRepository) GetByName(ctx context.Context, name string) (*model.Worker, error) {
 	var w model.Worker
 	err := r.db.WithContext(ctx).First(&w, "name = ?", name).Error
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// GetByOwnerAndName finds a worker scoped to a specific owner.
+func (r *WorkerRepository) GetByOwnerAndName(ctx context.Context, ownerID uuid.UUID, name string) (*model.Worker, error) {
+	var w model.Worker
+	err := r.db.WithContext(ctx).First(&w, "owner_id = ? AND name = ?", ownerID, name).Error
 	if err != nil {
 		return nil, err
 	}
@@ -60,9 +71,20 @@ func (r *WorkerRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&model.Worker{}, "id = ?", id).Error
 }
 
+// GetActiveByName finds an active worker by name (global). Used for public invocation.
 func (r *WorkerRepository) GetActiveByName(ctx context.Context, name string) (*model.Worker, error) {
 	var w model.Worker
 	err := r.db.WithContext(ctx).First(&w, "name = ? AND status = ?", name, model.WorkerStatusActive).Error
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// GetActiveByOwnerAndName finds an active worker scoped to a specific owner.
+func (r *WorkerRepository) GetActiveByOwnerAndName(ctx context.Context, ownerID uuid.UUID, name string) (*model.Worker, error) {
+	var w model.Worker
+	err := r.db.WithContext(ctx).First(&w, "owner_id = ? AND name = ? AND status = ?", ownerID, name, model.WorkerStatusActive).Error
 	if err != nil {
 		return nil, err
 	}

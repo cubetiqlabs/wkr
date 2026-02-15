@@ -1,0 +1,4 @@
+name: demo-js-worker
+runtime: javascript
+entry_point: main
+main: worker.js

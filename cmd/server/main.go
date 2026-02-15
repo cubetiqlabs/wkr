@@ -82,7 +82,7 @@ func main() {
 
 	// Services
 	authService := service.NewAuthService(userRepo, cfg.Auth.JWTSecret, cfg.Auth.JWTExpiry)
-	workerService := service.NewWorkerService(workerRepo, deploymentRepo, invocationRepo, cfg.Runtime.EncryptionKey)
+	workerService := service.NewWorkerService(workerRepo, deploymentRepo, invocationRepo, userRepo, cfg.Runtime.EncryptionKey)
 	quotaService := service.NewQuotaService(quotaRepo, workerRepo)
 
 	// Security

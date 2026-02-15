@@ -16,6 +16,10 @@ func main() {
 	switch os.Args[1] {
 	case "login":
 		cmdLogin()
+	case "logout":
+		cmdLogout()
+	case "whoami":
+		cmdWhoami()
 	case "init":
 		cmdInit()
 	case "deploy":
@@ -26,6 +30,10 @@ func main() {
 		cmdInvoke()
 	case "delete", "rm":
 		cmdDelete()
+	case "revisions", "rev":
+		cmdRevisions()
+	case "rollback":
+		cmdRollback()
 	case "version", "-v", "--version":
 		fmt.Println("wkr-cli v" + version)
 	case "help", "-h", "--help":
@@ -43,19 +51,33 @@ func printUsage() {
 Usage: wkr-cli <command> [options]
 
 Commands:
-  login          Authenticate with the Cubis Workers API
-  init           Initialize a new worker project (creates wkr.yaml)
-  deploy         Deploy the current worker to the platform
-  list, ls       List your deployed workers
-  invoke         Invoke a worker by name
-  delete, rm     Delete a worker by name
-  version        Print CLI version
-  help           Show this help message
+  login              Authenticate with the Cubis Workers API
+  logout             Remove stored credentials
+  whoami             Show current authenticated user
+  init               Initialize a new worker project
+  deploy             Deploy the current worker to the platform
+  list, ls           List your deployed workers
+  invoke             Invoke a worker by name
+  delete, rm         Delete a worker by name
+  revisions, rev     List deployment revisions for a worker
+  rollback           Rollback a worker to a specific version
+  version            Print CLI version
+  help               Show this help message
+
+Init options:
+  --name <name>      Worker name (creates subfolder if set)
+  --runtime <rt>     Runtime: go, javascript, typescript (default: javascript)
+  --template <tpl>   Use a prebuilt template (see --list-templates)
+  --list-templates   List available templates
 
 Examples:
   wkr-cli login --api-url http://localhost:8080 --email dev@example.com
-  wkr-cli init --name hello --runtime javascript
+  wkr-cli whoami
+  wkr-cli init --name my-api --template json-api
+  wkr-cli init --template hello-go
   wkr-cli deploy
   wkr-cli invoke hello
-  wkr-cli list`)
+  wkr-cli revisions hello
+  wkr-cli rollback hello --version 2
+  wkr-cli logout`)
 }

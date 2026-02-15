@@ -147,7 +147,63 @@ func (h *WorkerHandler) Delete(c fiber.Ctx) error {
 	return ok(c, fiber.Map{"deleted": true})
 }
 
-// UpdateByName handles PUT /api/v1/workers/by-name/:name
+// ListRevisions handles GET /api/v1/workers/by-name/:name/revisions
+func (h *WorkerHandler) ListRevisions(c fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	revisions, err := h.workerService.ListRevisions(c.Context(), c.Params("name"), userID, limit)
+	if err != nil {
+		switch err {
+		case service.ErrWorkerNotFound:
+			return errResponse(c, fiber.StatusNotFound, err.Error())
+		case service.ErrUnauthorized:
+			return errResponse(c, fiber.StatusForbidden, err.Error())
+		default:
+			return errResponse(c, fiber.StatusInternalServerError, "failed to list revisions")
+		}
+	}
+
+	return ok(c, revisions)
+}
+
+// Rollback handles POST /api/v1/workers/by-name/:name/rollback
+func (h *WorkerHandler) Rollback(c fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	var input struct {
+		Version int `json:"version"`
+	}
+	if err := c.Bind().Body(&input); err != nil || input.Version < 1 {
+		return errResponse(c, fiber.StatusBadRequest, "version is required and must be >= 1")
+	}
+
+	worker, err := h.workerService.Rollback(c.Context(), c.Params("name"), userID, input.Version)
+	if err != nil {
+		switch err {
+		case service.ErrWorkerNotFound:
+			return errResponse(c, fiber.StatusNotFound, err.Error())
+		case service.ErrUnauthorized:
+			return errResponse(c, fiber.StatusForbidden, err.Error())
+		case service.ErrRevisionNotFound:
+			return errResponse(c, fiber.StatusNotFound, err.Error())
+		default:
+			return errResponse(c, fiber.StatusInternalServerError, "failed to rollback worker")
+		}
+	}
+
+	return ok(c, worker)
+}
 func (h *WorkerHandler) UpdateByName(c fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {

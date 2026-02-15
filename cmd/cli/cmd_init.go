@@ -13,19 +13,100 @@ type WorkerConfig struct {
 	Name       string            `yaml:"name"`
 	Runtime    string            `yaml:"runtime"`
 	EntryPoint string            `yaml:"entry_point"`
-	Main       string            `yaml:"main"` // source file path
+	Main       string            `yaml:"main"`
 	EnvVars    map[string]string `yaml:"env_vars,omitempty"`
 }
 
 const configFile = "wkr.yaml"
 
+var templates = map[string]struct {
+	runtime string
+	code    string
+}{
+	"hello-js": {"javascript", `function main(req) {
+  return { message: "Hello from Cubis Workers!" };
+}
+`},
+	"hello-ts": {"typescript", `function main(req: any): any {
+  return { message: "Hello from Cubis Workers!" };
+}
+`},
+	"hello-go": {"go", `package main
+
+func main(req map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"message": "Hello from Cubis Workers!",
+	}
+}
+`},
+	"json-api": {"javascript", `function main(req) {
+  const body = JSON.parse(req.body || "{}");
+  return {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ok: true, received: body }),
+  };
+}
+`},
+	"cron": {"javascript", `function main(req) {
+  const now = new Date().toISOString();
+  console.log("cron tick at", now);
+  return { executed_at: now };
+}
+`},
+	"proxy": {"javascript", `function main(req) {
+  const target = req.headers["X-Target-Url"] || "https://httpbin.org/get";
+  return {
+    proxy: target,
+    headers: { "X-Forwarded-By": "cubis-worker" },
+  };
+}
+`},
+}
+
 func cmdInit() {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	name := fs.String("name", "", "Worker name")
-	runtime := fs.String("runtime", "javascript", "Runtime: go, javascript, typescript")
+	name := fs.String("name", "", "Worker name (creates subfolder if set)")
+	runtime := fs.String("runtime", "", "Runtime: go, javascript, typescript")
+	tmpl := fs.String("template", "", "Template: hello-js, hello-ts, hello-go, json-api, cron, proxy")
+	listTmpl := fs.Bool("list-templates", false, "List available templates")
 	fs.Parse(os.Args[2:])
 
-	if *name == "" {
+	if *listTmpl {
+		fmt.Println("Available templates:")
+		fmt.Printf("\n  %-14s %s\n", "NAME", "RUNTIME")
+		for k, v := range templates {
+			fmt.Printf("  %-14s %s\n", k, v.runtime)
+		}
+		return
+	}
+
+	// Resolve template
+	var code string
+	if *tmpl != "" {
+		t, ok := templates[*tmpl]
+		if !ok {
+			fatal("unknown template: " + *tmpl + " (use --list-templates)")
+		}
+		if *runtime == "" {
+			*runtime = t.runtime
+		}
+		code = t.code
+	}
+	if *runtime == "" {
+		*runtime = "javascript"
+	}
+
+	// If --name is set, create and cd into subfolder
+	if *name != "" {
+		if err := os.MkdirAll(*name, 0755); err != nil {
+			fatal("failed to create directory: " + err.Error())
+		}
+		if err := os.Chdir(*name); err != nil {
+			fatal("failed to enter directory: " + err.Error())
+		}
+		fmt.Println("✓ Created", *name+"/")
+	} else {
 		*name = filepath.Base(mustCwd())
 	}
 
@@ -44,9 +125,11 @@ func cmdInit() {
 		fatal("failed to write " + configFile + ": " + err.Error())
 	}
 
-	// Create scaffold source file if it doesn't exist
 	if _, err := os.Stat(mainFile); os.IsNotExist(err) {
-		os.WriteFile(mainFile, []byte(scaffold(*runtime)), 0644)
+		if code == "" {
+			code = scaffold(*runtime)
+		}
+		os.WriteFile(mainFile, []byte(code), 0644)
 		fmt.Println("✓ Created", mainFile)
 	}
 
@@ -76,23 +159,10 @@ func mustCwd() string {
 func scaffold(runtime string) string {
 	switch runtime {
 	case "go":
-		return `package main
-
-func main(req map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"message": "Hello from Cubis Workers!",
-	}
-}
-`
+		return templates["hello-go"].code
 	case "typescript":
-		return `function main(req: any): any {
-  return { message: "Hello from Cubis Workers!" };
-}
-`
+		return templates["hello-ts"].code
 	default:
-		return `function main(req) {
-  return { message: "Hello from Cubis Workers!" };
-}
-`
+		return templates["hello-js"].code
 	}
 }
