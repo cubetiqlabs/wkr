@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/cubetiqlabs/wkr/internal/edge"
 	"github.com/cubetiqlabs/wkr/internal/logger"
+	"github.com/cubetiqlabs/wkr/internal/model"
 	"github.com/cubetiqlabs/wkr/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
@@ -12,10 +13,11 @@ type EdgeHandler struct {
 	registry      *edge.Registry
 	router        *edge.Router
 	workerService *service.WorkerService
+	logBus        *service.LogBus
 }
 
-func NewEdgeHandler(registry *edge.Registry, router *edge.Router, workerService *service.WorkerService) *EdgeHandler {
-	return &EdgeHandler{registry: registry, router: router, workerService: workerService}
+func NewEdgeHandler(registry *edge.Registry, router *edge.Router, workerService *service.WorkerService, logBus *service.LogBus) *EdgeHandler {
+	return &EdgeHandler{registry: registry, router: router, workerService: workerService, logBus: logBus}
 }
 
 func (h *EdgeHandler) ListNodes(c fiber.Ctx) error {
@@ -70,4 +72,20 @@ func (h *EdgeHandler) SyncWorker(c fiber.Ctx) error {
 	)
 
 	return ok(c, fiber.Map{"synced": true, "action": "received"})
+}
+
+// ReceiveLog accepts an invocation log pushed from a remote edge node and publishes it to the local LogBus.
+func (h *EdgeHandler) ReceiveLog(c fiber.Ctx) error {
+	secret := c.Get("X-Cubis-Internal-Secret")
+	if !h.router.ValidateInternalSecret(secret) {
+		return errResponse(c, fiber.StatusUnauthorized, "invalid internal secret")
+	}
+
+	var inv model.Invocation
+	if err := c.Bind().JSON(&inv); err != nil {
+		return errResponse(c, fiber.StatusBadRequest, "invalid payload")
+	}
+
+	h.logBus.Publish(&inv)
+	return ok(c, fiber.Map{"received": true})
 }

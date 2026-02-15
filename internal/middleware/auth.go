@@ -73,6 +73,16 @@ func GetUserID(c fiber.Ctx) (uuid.UUID, error) {
 	return id, nil
 }
 
+// ParseUserIDFromToken validates a raw JWT and returns the user ID.
+// Used for WebSocket auth where the token comes from a query param.
+func ParseUserIDFromToken(token string, jwtSecret []byte) (uuid.UUID, error) {
+	claims, err := service.ValidateJWT(token, jwtSecret)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return uuid.Parse(claims.Sub)
+}
+
 func RequestLogger() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		err := c.Next()

@@ -4,9 +4,13 @@ import (
 	"io/ioutil"
 	"net/http"
 	"time"
+	"log"
 )
 
 func handler(req map[string]interface{}) map[string]interface{} {
+	userAgent := req["headers"].(map[string]interface{})["User-Agent"]
+	log.Printf("Received request with User-Agent: %s", userAgent)
+
 	todoId := req["query"].(map[string]interface{})["id"]
 	if todoId == nil {
 		return map[string]interface{}{

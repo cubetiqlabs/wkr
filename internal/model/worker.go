@@ -83,12 +83,21 @@ type Invocation struct {
 	ID            uuid.UUID     `gorm:"type:uuid;primaryKey" json:"id"`
 	WorkerID      uuid.UUID     `gorm:"type:uuid;not null;index" json:"worker_id"`
 	OwnerID       uuid.UUID     `gorm:"type:uuid;not null;index" json:"owner_id"`
+	RequestID     string        `gorm:"size:64;not null;index" json:"request_id"`
+	NodeID        string        `gorm:"size:64" json:"node_id"`
+	Region        string        `gorm:"size:32" json:"region,omitempty"`
 	Duration      time.Duration `json:"duration"`
 	StatusCode    int           `json:"status_code"`
 	MemoryUsed    int           `json:"memory_used"`
 	RequestBytes  int64         `json:"request_bytes"`
 	ResponseBytes int64         `json:"response_bytes"`
+	Method        string        `gorm:"size:10" json:"method"`
+	Path          string        `gorm:"size:2048" json:"path"`
+	ClientIP      string        `gorm:"size:45" json:"client_ip"`
+	UserAgent     string        `gorm:"size:512" json:"user_agent,omitempty"`
 	Error         string        `gorm:"type:text" json:"error,omitempty"`
+	Logs          StringSlice   `gorm:"type:jsonb;default:'[]'" json:"logs,omitempty"`
+	StackTrace    string        `gorm:"type:text" json:"stack_trace,omitempty"`
 	CreatedAt     time.Time     `gorm:"autoCreateTime;index" json:"created_at"`
 }
 

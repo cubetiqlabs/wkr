@@ -343,6 +343,15 @@ func (s *WorkerService) RecordInvocation(ctx context.Context, inv *model.Invocat
 	_ = s.invocationRepo.Create(ctx, inv)
 }
 
+func (s *WorkerService) ListLogs(ctx context.Context, name string, ownerID uuid.UUID, limit int) ([]model.Invocation, error) {
+	w, err := s.GetWorkerByNameForOwner(ctx, name, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	logs, _, err := s.invocationRepo.ListByWorker(ctx, w.ID, 0, limit)
+	return logs, err
+}
+
 func hashCode(code string) string {
 	h := sha256.Sum256([]byte(code))
 	return fmt.Sprintf("%x", h)

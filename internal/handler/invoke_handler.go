@@ -2,7 +2,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cubetiqlabs/wkr/internal/edge"
@@ -24,6 +28,8 @@ type InvokeHandler struct {
 	auditor       *security.Auditor
 	edgeRouter    *edge.Router
 	nodeID        string
+	region        string
+	logBus        *service.LogBus
 }
 
 func NewInvokeHandler(
@@ -33,6 +39,8 @@ func NewInvokeHandler(
 	auditor *security.Auditor,
 	edgeRouter *edge.Router,
 	nodeID string,
+	region string,
+	logBus *service.LogBus,
 ) *InvokeHandler {
 	return &InvokeHandler{
 		workerService: workerService,
@@ -41,6 +49,8 @@ func NewInvokeHandler(
 		auditor:       auditor,
 		edgeRouter:    edgeRouter,
 		nodeID:        nodeID,
+		region:        region,
+		logBus:        logBus,
 	}
 }
 
@@ -56,13 +66,14 @@ type WorkerErrorDetail struct {
 }
 
 func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
-	name := c.Params("name")
-	if name == "" {
+	wildcard := c.Params("*")
+	if wildcard == "" {
 		return errResponse(c, fiber.StatusBadRequest, "worker name required")
 	}
 
-	// Scoped invocation: /invoke/@username/worker-name
+	name, subPath := splitWorkerPath(wildcard)
 	username := c.Params("username")
+
 	var worker *model.Worker
 	var err error
 	if username != "" {
@@ -74,7 +85,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		return errResponse(c, fiber.StatusNotFound, "worker not found")
 	}
 
-	// Enforce account quota — fail closed on unexpected errors
+	// Enforce account quota
 	if err := h.quotaService.CheckInvocationAllowed(c.Context(), worker.OwnerID); err != nil {
 		switch err {
 		case service.ErrQuotaRequestsExceeded:
@@ -99,7 +110,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 
 	reqBody := c.Body()
 
-	// Edge routing: forward to a less-loaded node if available
+	// Edge routing
 	isForwarded := c.Get("X-Cubis-Edge-Route") == "true"
 	if h.edgeRouter != nil {
 		if target := h.edgeRouter.ShouldForwardToEdge(isForwarded); target != nil {
@@ -108,7 +119,14 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 				zap.String("target_node", target.NodeID),
 				zap.String("target_endpoint", target.Endpoint),
 			)
-			status, body, respHeaders, err := h.edgeRouter.ForwardRequest(c.Context(), target, name, c.Method(), reqBody, headers, string(c.Request().URI().QueryString()))
+			invokePath := name
+			if subPath != "" {
+				invokePath = name + "/" + subPath
+			}
+			if username != "" {
+				invokePath = "@" + username + "/" + invokePath
+			}
+			status, body, respHeaders, err := h.edgeRouter.ForwardRequest(c.Context(), target, invokePath, c.Method(), reqBody, headers, string(c.Request().URI().QueryString()))
 			if err != nil {
 				logger.Error("edge forward failed, executing locally",
 					zap.String("target_node", target.NodeID),
@@ -130,6 +148,46 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	}
 
 	requestBytes := int64(len(reqBody))
+	requestID := uuid.New().String()
+	reqPath := "/" + subPath
+	forwardedFrom := c.Get("X-Cubis-Forwarded-From") // origin node that forwarded to us
+
+	// Pre-populate invocation — guaranteed to be recorded via defer
+	inv := &model.Invocation{
+		WorkerID:     worker.ID,
+		OwnerID:      worker.OwnerID,
+		RequestID:    requestID,
+		NodeID:       h.nodeID,
+		Region:       h.region,
+		RequestBytes: requestBytes,
+		Method:       c.Method(),
+		Path:         reqPath,
+		ClientIP:     c.IP(),
+		UserAgent:    c.Get("User-Agent"),
+		StatusCode:   500, // default to error; overwritten on success
+	}
+
+	start := time.Now()
+	recorded := false
+
+	// Defer: always record invocation + publish to log bus, even on panic
+	defer func() {
+		if r := recover(); r != nil {
+			stack := string(debug.Stack())
+			inv.Error = fmt.Sprintf("panic: %v", r)
+			inv.StackTrace = stack
+			inv.Duration = time.Since(start)
+			logger.Error("invoke handler panic",
+				zap.String("worker", worker.Name),
+				zap.String("request_id", requestID),
+				zap.String("panic", inv.Error),
+				zap.String("stack", stack),
+			)
+		}
+		if !recorded {
+			go h.recordTelemetry(worker.OwnerID, inv, inv.Duration.Milliseconds(), requestBytes, inv.ResponseBytes, forwardedFrom)
+		}
+	}()
 
 	req := &runtime.ExecutionRequest{
 		WorkerName: worker.Name,
@@ -141,35 +199,29 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		Payload:    reqBody,
 		Headers:    headers,
 		Method:     c.Method(),
-		Path:       c.Path(),
+		Path:       reqPath,
 		Query:      string(c.Request().URI().QueryString()),
 	}
 
 	result, err := h.pool.Execute(c.Context(), req)
-	requestID := uuid.New().String()
+	inv.Duration = time.Since(start)
 
-	inv := &model.Invocation{
-		WorkerID:     worker.ID,
-		OwnerID:      worker.OwnerID,
-		RequestBytes: requestBytes,
-	}
-
-	setTelemetry := func(respBytes int64, dur time.Duration) {
+	setTelemetry := func(respBytes int64) {
 		c.Set("X-Cubis-Worker", worker.Name)
 		c.Set("X-Cubis-Request-ID", requestID)
 		c.Set("X-Cubis-Node-ID", h.nodeID)
-		c.Set("X-Cubis-Duration", dur.String())
+		c.Set("X-Cubis-Duration", inv.Duration.String())
 		c.Set("X-Cubis-Timestamp", time.Now().UTC().Format(time.RFC3339))
 		c.Set("X-Cubis-Request-Bytes", strconv.FormatInt(requestBytes, 10))
 		c.Set("X-Cubis-Response-Bytes", strconv.FormatInt(respBytes, 10))
 	}
 
-	// Pool-level error
+	// Pool-level error (timeout, pool full, engine crash)
 	if err != nil {
-		inv.StatusCode = 500
 		inv.Error = err.Error()
-		go h.recordTelemetry(worker.OwnerID, inv, 0, requestBytes, 0)
-		setTelemetry(0, 0)
+		setTelemetry(0)
+		go h.recordTelemetry(worker.OwnerID, inv, 0, requestBytes, 0, forwardedFrom)
+		recorded = true
 		logger.Error("worker execution failed",
 			zap.String("worker", worker.Name),
 			zap.String("request_id", requestID),
@@ -190,9 +242,16 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	inv.MemoryUsed = result.MemoryUsed
 	inv.ResponseBytes = responseBytes
 	inv.Error = result.Error
+	inv.Logs = result.Logs
 
-	go h.recordTelemetry(worker.OwnerID, inv, result.Duration.Milliseconds(), requestBytes, responseBytes)
-	setTelemetry(responseBytes, result.Duration)
+	// Capture stack trace from stderr logs on error
+	if result.Error != "" && len(result.Logs) > 0 {
+		inv.StackTrace = strings.Join(result.Logs, "\n")
+	}
+
+	go h.recordTelemetry(worker.OwnerID, inv, result.Duration.Milliseconds(), requestBytes, responseBytes, forwardedFrom)
+	recorded = true
+	setTelemetry(responseBytes)
 
 	// Security blocked
 	if result.StatusCode == 403 && result.Error != "" {
@@ -240,10 +299,28 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	return c.Status(result.StatusCode).Send(result.Body)
 }
 
-func (h *InvokeHandler) recordTelemetry(ownerID uuid.UUID, inv *model.Invocation, execTimeMs, reqBytes, respBytes int64) {
+func (h *InvokeHandler) recordTelemetry(ownerID uuid.UUID, inv *model.Invocation, execTimeMs, reqBytes, respBytes int64, forwardedFrom string) {
 	ctx := context.Background()
 	h.workerService.RecordInvocation(ctx, inv)
 	h.quotaService.RecordUsage(ctx, ownerID, execTimeMs, inv.RequestBytes, inv.ResponseBytes, inv.Error != "")
 	metrics.RequestBytesTotal.WithLabelValues(h.nodeID).Add(float64(reqBytes))
 	metrics.ResponseBytesTotal.WithLabelValues(h.nodeID).Add(float64(respBytes))
+	h.logBus.Publish(inv)
+
+	// Push log back to origin node so its SSE subscribers see edge-executed logs
+	if forwardedFrom != "" && h.edgeRouter != nil {
+		if origin := h.edgeRouter.FindNode(forwardedFrom); origin != nil {
+			data, _ := json.Marshal(inv)
+			h.edgeRouter.PushLog(origin, data)
+		}
+	}
+}
+
+// splitWorkerPath splits "my-worker/v1/users" into ("my-worker", "v1/users").
+func splitWorkerPath(s string) (name, subPath string) {
+	s = strings.TrimPrefix(s, "/")
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
 }

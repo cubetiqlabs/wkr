@@ -126,12 +126,13 @@ func main() {
 	registry.StartHeartbeat()
 
 	// Handlers
+	logBus := service.NewLogBus()
 	authHandler := handler.NewAuthHandler(authService)
-	workerHandler := handler.NewWorkerHandler(workerService, quotaService)
-	invokeHandler := handler.NewInvokeHandler(workerService, quotaService, pool, auditor, edgeRouter, cfg.Edge.NodeID)
+	workerHandler := handler.NewWorkerHandler(workerService, quotaService, logBus, []byte(cfg.Auth.JWTSecret))
+	invokeHandler := handler.NewInvokeHandler(workerService, quotaService, pool, auditor, edgeRouter, cfg.Edge.NodeID, cfg.Edge.Region, logBus)
 	healthHandler := handler.NewHealthHandler(db, pool, registry)
 	quotaHandler := handler.NewQuotaHandler(quotaService)
-	edgeHandler := handler.NewEdgeHandler(registry, edgeRouter, workerService)
+	edgeHandler := handler.NewEdgeHandler(registry, edgeRouter, workerService, logBus)
 
 	// Server
 	app := server.New(cfg.Server, cfg.App)

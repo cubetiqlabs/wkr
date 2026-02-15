@@ -1,13 +1,17 @@
 package handler
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cubetiqlabs/wkr/internal/middleware"
 	"github.com/cubetiqlabs/wkr/internal/service"
+	fws "github.com/fasthttp/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/valyala/fasthttp"
 )
 
 const (
@@ -37,10 +41,12 @@ func workerWriteError(c fiber.Ctx, err error, action string) error {
 type WorkerHandler struct {
 	workerService *service.WorkerService
 	quotaService  *service.QuotaService
+	logBus        *service.LogBus
+	jwtSecret     []byte
 }
 
-func NewWorkerHandler(workerService *service.WorkerService, quotaService *service.QuotaService) *WorkerHandler {
-	return &WorkerHandler{workerService: workerService, quotaService: quotaService}
+func NewWorkerHandler(workerService *service.WorkerService, quotaService *service.QuotaService, logBus *service.LogBus, jwtSecret []byte) *WorkerHandler {
+	return &WorkerHandler{workerService: workerService, quotaService: quotaService, logBus: logBus, jwtSecret: jwtSecret}
 }
 
 func (h *WorkerHandler) Create(c fiber.Ctx) error {
@@ -217,4 +223,83 @@ func (h *WorkerHandler) DeleteByName(c fiber.Ctx) error {
 	}
 
 	return ok(c, fiber.Map{"deleted": true})
+}
+
+func (h *WorkerHandler) Logs(c fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	limit, _ := strconv.Atoi(c.Query("limit", "50"))
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+
+	logs, err := h.workerService.ListLogs(c.Context(), c.Params("name"), userID, limit)
+	if err != nil {
+		return workerWriteError(c, err, "list logs for")
+	}
+
+	return ok(c, logs)
+}
+
+var wsUpgrader = fws.FastHTTPUpgrader{
+	CheckOrigin: func(ctx *fasthttp.RequestCtx) bool { return true },
+}
+
+func (h *WorkerHandler) LogStream(c fiber.Ctx) error {
+	// Authenticate before upgrade — token from query param since WS can't set headers
+	token := c.Query("token")
+	if token == "" {
+		token = strings.TrimPrefix(c.Get("Authorization"), "Bearer ")
+	}
+	userID, err := middleware.ParseUserIDFromToken(token, h.jwtSecret)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	w, err := h.workerService.GetWorkerByNameForOwner(c.Context(), c.Params("name"), userID)
+	if err != nil {
+		return workerWriteError(c, err, "stream logs for")
+	}
+
+	workerID := w.ID
+	return wsUpgrader.Upgrade(c.RequestCtx(), func(conn *fws.Conn) {
+		ch := h.logBus.Subscribe(workerID)
+		defer h.logBus.Unsubscribe(workerID, ch)
+		defer conn.Close()
+
+		// Read pump — just drain to detect close
+		go func() {
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					h.logBus.Unsubscribe(workerID, ch)
+					return
+				}
+			}
+		}()
+
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case inv, open := <-ch:
+				if !open {
+					return
+				}
+				data, _ := json.Marshal(inv)
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := conn.WriteMessage(fws.TextMessage, data); err != nil {
+					return
+				}
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := conn.WriteMessage(fws.PingMessage, nil); err != nil {
+					return
+				}
+			}
+		}
+	})
 }

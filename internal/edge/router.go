@@ -243,3 +243,32 @@ func (r *Router) ValidateInternalSecret(secret string) bool {
 	}
 	return subtle.ConstantTimeCompare([]byte(r.internalSecret), []byte(secret)) == 1
 }
+
+// PushLog sends an invocation log to a specific node's /internal/log endpoint.
+func (r *Router) PushLog(node *model.EdgeNode, data []byte) {
+	url := fmt.Sprintf("%s/internal/log", node.Endpoint)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if r.internalSecret != "" {
+		req.Header.Set("X-Cubis-Internal-Secret", r.internalSecret)
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		logger.Debug("push log to origin failed", zap.String("node", node.NodeID), zap.Error(err))
+		return
+	}
+	resp.Body.Close()
+}
+
+// FindNode returns the edge node with the given nodeID, or nil.
+func (r *Router) FindNode(nodeID string) *model.EdgeNode {
+	for _, n := range r.registry.GetHealthyNodes("") {
+		if n.NodeID == nodeID {
+			return n
+		}
+	}
+	return nil
+}

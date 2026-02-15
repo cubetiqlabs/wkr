@@ -86,6 +86,9 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	auth.Post("/register", r.authHandler.Register)
 	auth.Post("/login", r.authHandler.Login)
 
+	// WebSocket log stream (auth via query token, must be before /workers group)
+	v1.Get("/ws/logs/:name", r.workerHandler.LogStream)
+
 	// Workers (authenticated)
 	workers := v1.Group("/workers")
 	workers.Use(middleware.Auth(r.jwtSecret))
@@ -95,6 +98,7 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	workers.Delete("/by-name/:name", r.workerHandler.DeleteByName)
 	workers.Get("/by-name/:name/revisions", r.workerHandler.ListRevisions)
 	workers.Post("/by-name/:name/rollback", r.workerHandler.Rollback)
+	workers.Get("/by-name/:name/logs", r.workerHandler.Logs)
 	workers.Get("/:id", r.workerHandler.Get)
 	workers.Put("/:id", r.workerHandler.Update)
 	workers.Delete("/:id", r.workerHandler.Delete)
@@ -113,13 +117,14 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	// Invoke (public, rate-limited)
 	invoke := v1.Group("/invoke")
 	invoke.Use(limiter.Handler())
-	invoke.Post("/@:username/:name", r.invokeHandler.Invoke)
-	invoke.Get("/@:username/:name", r.invokeHandler.Invoke)
-	invoke.Post("/:name", r.invokeHandler.Invoke)
-	invoke.Get("/:name", r.invokeHandler.Invoke)
+	invoke.Post("/@:username/*", r.invokeHandler.Invoke)
+	invoke.Get("/@:username/*", r.invokeHandler.Invoke)
+	invoke.Post("/*", r.invokeHandler.Invoke)
+	invoke.Get("/*", r.invokeHandler.Invoke)
 
 	// Internal edge sync (secret-authenticated, not public)
 	r.app.Post("/internal/sync/worker", r.edgeHandler.SyncWorker)
+	r.app.Post("/internal/log", r.edgeHandler.ReceiveLog)
 
 	return limiter
 }

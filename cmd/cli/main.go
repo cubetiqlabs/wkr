@@ -34,6 +34,8 @@ func main() {
 		cmdDelete()
 	case "revisions", "rev":
 		cmdRevisions()
+	case "logs":
+		cmdLogs()
 	case "rollback":
 		cmdRollback()
 	case "version", "-v", "--version":
@@ -63,6 +65,7 @@ Commands:
   invoke             Invoke a worker by name
   delete, rm         Delete a worker by name
   revisions, rev     List deployment revisions for a worker
+  logs               View invocation logs for a worker
   rollback           Rollback a worker to a specific version
   version            Print CLI version
   help               Show this help message
@@ -82,6 +85,8 @@ Examples:
   wkr-cli dev --body '{"name":"test"}' --query 'page=1'
   wkr-cli invoke hello
   wkr-cli revisions hello
+  wkr-cli logs hello
+  wkr-cli logs hello -f
   wkr-cli rollback hello --version 2
   wkr-cli logout`)
 }
