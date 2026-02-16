@@ -12,7 +12,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /wkr ./cmd/server
 # Runtime stage — needs Go for compiling Go workers, Deno for JS/TS workers, Python for Python workers, Rust for Rust workers
 FROM golang:1.25-alpine
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-RUN apk add --no-cache ca-certificates tzdata deno python3 py3-pip rust cargo \
+RUN apk add --no-cache ca-certificates tzdata deno python3 py3-pip \
+    rust cargo cmake make g++ gcc musl-dev python3-dev \
     && addgroup -S cubis && adduser -S cubis -G cubis \
     && mkdir -p /tmp/cubis-cache && chown cubis:cubis /tmp/cubis-cache
 WORKDIR /app
