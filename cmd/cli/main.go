@@ -42,6 +42,8 @@ func main() {
 		fmt.Println("wkr v" + version)
 	case "update", "upgrade":
 		cmdUpdate()
+	case "usage":
+		cmdUsage()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -70,6 +72,7 @@ Commands:
   logs               View invocation logs for a worker
   rollback           Rollback a worker to a specific version
   update, upgrade    Update wkr to the latest version
+  usage              Show account usage and quota
   version            Print CLI version
   help               Show this help message
 

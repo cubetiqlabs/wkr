@@ -92,9 +92,23 @@ func cmdUpdate() {
 	}
 
 	if err := os.Rename(tmp.Name(), exe); err != nil {
-		// Rename may fail cross-device; fall back to copy
-		if err := copyFile(tmp.Name(), exe); err != nil {
-			fatal("update failed: " + err.Error() + "\n  Try: curl -fsSL https://raw.githubusercontent.com/" + repo + "/main/scripts/install.sh | sh")
+		// Rename may fail cross-device or on running binary; move old aside first, then copy
+		old := exe + ".old"
+		os.Remove(old)
+		if renameErr := os.Rename(exe, old); renameErr == nil {
+			if err := os.Rename(tmp.Name(), exe); err != nil {
+				// Rename new also failed (cross-device); copy instead
+				if err := copyFile(tmp.Name(), exe); err != nil {
+					os.Rename(old, exe) // restore
+					fatal("update failed: " + err.Error() + "\n  Try: curl -fsSL https://raw.githubusercontent.com/" + repo + "/main/scripts/install.sh | sh")
+				}
+			}
+			os.Remove(old)
+		} else {
+			// Can't rename old binary; fall back to direct copy
+			if err := copyFile(tmp.Name(), exe); err != nil {
+				fatal("update failed: " + err.Error() + "\n  Try: curl -fsSL https://raw.githubusercontent.com/" + repo + "/main/scripts/install.sh | sh")
+			}
 		}
 	}
 
