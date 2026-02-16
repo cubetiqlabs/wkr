@@ -1,0 +1,9 @@
+{
+    "sonarlint.connectedMode.project": {
+        "connectionId": "https-sonarqube-ctdn-dev",
+        "projectKey": "cubetiqlabs_wkr_ccd63c9e-ddab-4f62-8515-8f7df8222bd9"
+    },
+    "yaml.schemas": {
+        "https://raw.githubusercontent.com/cubetiqlabs/wkr/main/schemas/wkr.schema.json": "wkr.yaml"
+    }
+}
