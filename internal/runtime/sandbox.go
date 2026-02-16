@@ -46,7 +46,7 @@ func NewSandboxEngine(nodeID string) *SandboxEngine {
 	cacheDir := filepath.Join(os.TempDir(), "cubis-cache")
 	os.MkdirAll(cacheDir, 0o700)
 
-	// Detect JS runtime once
+	// Detect JS runtime once (default, may be overridden per-request by version)
 	jsRT := "node"
 	if _, err := exec.LookPath("deno"); err == nil {
 		jsRT = "deno"
@@ -101,7 +101,9 @@ func (e *SandboxEngine) Execute(ctx context.Context, req *ExecutionRequest) (*Ex
 // ---------- Go Runtime (compiled binary cache) ----------
 
 func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*ExecutionResult, error) {
-	binPath, err := e.getOrCompileGo(ctx, req)
+	goBin := resolveRuntime("go", req.RuntimeVersion)
+
+	binPath, err := e.getOrCompileGo(ctx, req, goBin)
 	if err != nil {
 		return &ExecutionResult{
 			StatusCode: 500,
@@ -154,10 +156,10 @@ func (e *SandboxEngine) executeGo(ctx context.Context, req *ExecutionRequest) (*
 }
 
 // getOrCompileGo returns a cached binary path or compiles one.
-func (e *SandboxEngine) getOrCompileGo(ctx context.Context, req *ExecutionRequest) (string, error) {
+func (e *SandboxEngine) getOrCompileGo(ctx context.Context, req *ExecutionRequest, goBin string) (string, error) {
 	cacheKey := req.CodeHash
 	if cacheKey == "" {
-		h := sha256.Sum256([]byte(req.Code + req.EntryPoint))
+		h := sha256.Sum256([]byte(req.Code + req.EntryPoint + req.RuntimeVersion + req.Dependencies))
 		cacheKey = fmt.Sprintf("%x", h)
 	}
 
@@ -174,18 +176,35 @@ func (e *SandboxEngine) getOrCompileGo(ctx context.Context, req *ExecutionReques
 	metrics.GoCacheMisses.WithLabelValues(e.nodeID).Inc()
 
 	// Slow path: compile
-	srcPath := filepath.Join(e.goCacheDir, cacheKey+".go")
+	buildDir := filepath.Join(e.goCacheDir, "go-"+cacheKey)
+	os.MkdirAll(buildDir, 0o755)
+	srcPath := filepath.Join(buildDir, "main.go")
 	binPath := filepath.Join(e.goCacheDir, cacheKey)
 
 	if err := os.WriteFile(srcPath, []byte(wrapGoCode(req.Code, req.EntryPoint)), 0o644); err != nil {
 		return "", fmt.Errorf("write source: %w", err)
 	}
-	defer os.Remove(srcPath)
+
+	// Install dependencies if provided (write go.mod, go mod download)
+	if req.Dependencies != "" {
+		depsDir, err := installDeps(ctx, "go", req.Dependencies, req.PackageManager, goBin, e.hostEnv)
+		if err != nil {
+			return "", fmt.Errorf("install deps: %w", err)
+		}
+		// Copy go.mod/go.sum into build dir for compilation
+		for _, f := range []string{"go.mod", "go.sum"} {
+			src := filepath.Join(depsDir, f)
+			if data, err := os.ReadFile(src); err == nil {
+				os.WriteFile(filepath.Join(buildDir, f), data, 0o644)
+			}
+		}
+	}
 
 	stderr := e.getBuf()
 	defer e.putBuf(stderr)
 
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, srcPath)
+	cmd := exec.CommandContext(ctx, goBin, "build", "-o", binPath, srcPath)
+	cmd.Dir = buildDir
 	cmd.Stderr = stderr
 	cmd.Env = e.hostEnv
 
@@ -205,27 +224,56 @@ func (e *SandboxEngine) executeJS(ctx context.Context, req *ExecutionRequest) (*
 	payload := buildWorkerPayload(req)
 	code := wrapJSCode(req.Code, req.EntryPoint)
 
+	jsBin := resolveRuntime(req.Runtime, req.RuntimeVersion)
+	isDeno := strings.Contains(jsBin, "deno") || e.jsRuntime == "deno"
+
+	env := e.buildWorkerEnv(req.EnvVars)
+
+	// Install npm dependencies if provided
+	hasDeps := req.Dependencies != ""
+	var depsDir string
+	if hasDeps {
+		var err error
+		depsDir, err = installDeps(ctx, req.Runtime, req.Dependencies, req.PackageManager, jsBin, env)
+		if err != nil {
+			return &ExecutionResult{
+				StatusCode: 500,
+				Error:      "install deps: " + err.Error(),
+			}, nil
+		}
+		env = append(env, "NODE_PATH="+filepath.Join(depsDir, "node_modules"))
+	}
+
 	var args []string
-	if e.jsRuntime == "deno" {
-		args = []string{"eval",
-			"--no-remote",
-			code}
+	var tmpFile string
+	if isDeno && hasDeps {
+		// Deno resolves node_modules relative to file URL — must use relative path from deps dir
+		filename := fmt.Sprintf("wkr_%x.js", sha256.Sum256([]byte(code)))
+		tmpFile = filepath.Join(depsDir, filename)
+		os.WriteFile(tmpFile, []byte(code), 0o644)
+		args = []string{"run", "--allow-env", "--allow-read", "--allow-net=0.0.0.0", "--node-modules-dir=auto", filename}
+	} else if isDeno {
+		args = []string{"eval", "--no-remote", code}
 	} else {
 		args = []string{"-e", code}
 	}
-
-	env := e.buildWorkerEnv(req.EnvVars)
 
 	stdout := e.getBuf()
 	stderr := e.getBuf()
 	defer e.putBuf(stdout)
 	defer e.putBuf(stderr)
+	if tmpFile != "" {
+		defer os.Remove(tmpFile)
+	}
 
-	cmd := exec.CommandContext(ctx, e.jsRuntime, args...)
+	cmd := exec.CommandContext(ctx, jsBin, args...)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = env
+	if depsDir != "" {
+		cmd.Dir = depsDir
+	}
 
 	start := time.Now()
 	err := cmd.Run()
@@ -275,21 +323,26 @@ func (e *SandboxEngine) Shutdown(_ context.Context) error {
 
 // Verify performs a dry-run compile/syntax check without executing the worker.
 func (e *SandboxEngine) Verify(ctx context.Context, code, runtime, entryPoint string) error {
-	switch runtime {
+	return e.VerifyWithVersion(ctx, code, runtime, "", entryPoint, "", "")
+}
+
+// VerifyWithVersion performs a dry-run compile/syntax check using a specific runtime version.
+func (e *SandboxEngine) VerifyWithVersion(ctx context.Context, code, rt, version, entryPoint, deps, pm string) error {
+	switch rt {
 	case "go":
-		return e.verifyGo(ctx, code, entryPoint)
+		return e.verifyGo(ctx, code, entryPoint, resolveRuntime("go", version))
 	case "javascript":
-		return e.verifyJS(ctx, code, "js")
+		return e.verifyJS(ctx, code, "js", resolveRuntime("javascript", version), deps, pm)
 	case "typescript":
-		return e.verifyJS(ctx, code, "ts")
+		return e.verifyJS(ctx, code, "ts", resolveRuntime("typescript", version), deps, pm)
 	case "python":
-		return e.verifyPython(ctx, code)
+		return e.verifyPython(ctx, code, resolveRuntime("python", version))
 	default:
-		return fmt.Errorf("unsupported runtime: %s", runtime)
+		return fmt.Errorf("unsupported runtime: %s", rt)
 	}
 }
 
-func (e *SandboxEngine) verifyGo(ctx context.Context, code, entryPoint string) error {
+func (e *SandboxEngine) verifyGo(ctx context.Context, code, entryPoint, goBin string) error {
 	src := wrapGoCode(code, entryPoint)
 	srcPath := filepath.Join(e.goCacheDir, fmt.Sprintf("verify_%x.go", sha256.Sum256([]byte(src))))
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -300,7 +353,7 @@ func (e *SandboxEngine) verifyGo(ctx context.Context, code, entryPoint string) e
 	stderr := e.getBuf()
 	defer e.putBuf(stderr)
 
-	cmd := exec.CommandContext(ctx, "go", "vet", srcPath)
+	cmd := exec.CommandContext(ctx, goBin, "vet", srcPath)
 	cmd.Stderr = stderr
 	cmd.Env = e.hostEnv
 	if err := cmd.Run(); err != nil {
@@ -309,13 +362,32 @@ func (e *SandboxEngine) verifyGo(ctx context.Context, code, entryPoint string) e
 	return nil
 }
 
-func (e *SandboxEngine) verifyJS(ctx context.Context, code, ext string) error {
+func (e *SandboxEngine) verifyJS(ctx context.Context, code, ext, jsBin, deps, pm string) error {
+	isDeno := strings.Contains(jsBin, "deno")
+	hasDeps := strings.TrimSpace(deps) != ""
+
 	// node --check can't parse TypeScript — skip verification when Deno isn't available
-	if ext == "ts" && e.jsRuntime != "deno" {
+	if ext == "ts" && !isDeno {
 		return nil
 	}
 
-	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("verify_%x.%s", sha256.Sum256([]byte(code)), ext))
+	// If deps are declared, install them first so imports can resolve
+	var depsDir string
+	if hasDeps {
+		dir, err := installDeps(ctx, "javascript", deps, pm, jsBin, e.hostEnv)
+		if err != nil {
+			return fmt.Errorf("install deps for verify: %w", err)
+		}
+		depsDir = dir
+	}
+
+	// Write code file — into deps dir when deps exist so node_modules resolves
+	writeDir := os.TempDir()
+	if depsDir != "" {
+		writeDir = depsDir
+	}
+	filename := fmt.Sprintf("verify_%x.%s", sha256.Sum256([]byte(code)), ext)
+	tmpFile := filepath.Join(writeDir, filename)
 	os.WriteFile(tmpFile, []byte(code), 0o644)
 	defer os.Remove(tmpFile)
 
@@ -323,10 +395,19 @@ func (e *SandboxEngine) verifyJS(ctx context.Context, code, ext string) error {
 	defer e.putBuf(stderr)
 
 	var cmd *exec.Cmd
-	if e.jsRuntime == "deno" {
-		cmd = exec.CommandContext(ctx, "deno", "check", "--no-remote", tmpFile)
+	if isDeno {
+		if hasDeps {
+			// Deno resolves node_modules relative to the file URL — must use relative path from deps dir
+			cmd = exec.CommandContext(ctx, jsBin, "check", "--node-modules-dir=auto", filename)
+			cmd.Dir = depsDir
+		} else {
+			cmd = exec.CommandContext(ctx, jsBin, "check", "--no-remote", tmpFile)
+		}
 	} else {
-		cmd = exec.CommandContext(ctx, "node", "--check", tmpFile)
+		cmd = exec.CommandContext(ctx, jsBin, "--check", tmpFile)
+		if depsDir != "" {
+			cmd.Env = append(e.hostEnv, "NODE_PATH="+filepath.Join(depsDir, "node_modules"))
+		}
 	}
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -335,9 +416,7 @@ func (e *SandboxEngine) verifyJS(ctx context.Context, code, ext string) error {
 	return nil
 }
 
-// ---------- Python Runtime ----------
-
-func (e *SandboxEngine) verifyPython(ctx context.Context, code string) error {
+func (e *SandboxEngine) verifyPython(ctx context.Context, code, pyBin string) error {
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("verify_%x.py", sha256.Sum256([]byte(code))))
 	os.WriteFile(tmpFile, []byte(code), 0o644)
 	defer os.Remove(tmpFile)
@@ -345,7 +424,7 @@ func (e *SandboxEngine) verifyPython(ctx context.Context, code string) error {
 	stderr := e.getBuf()
 	defer e.putBuf(stderr)
 
-	cmd := exec.CommandContext(ctx, "python3", "-m", "py_compile", tmpFile)
+	cmd := exec.CommandContext(ctx, pyBin, "-m", "py_compile", tmpFile)
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("syntax error:\n%s", stderr.String())
@@ -357,18 +436,32 @@ func (e *SandboxEngine) executePython(ctx context.Context, req *ExecutionRequest
 	payload := buildWorkerPayload(req)
 	code := wrapPyCode(req.Code, req.EntryPoint)
 
+	pyBin := resolveRuntime("python", req.RuntimeVersion)
+
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("wkr_%x.py", sha256.Sum256([]byte(code))))
 	os.WriteFile(tmpFile, []byte(code), 0o644)
 	defer os.Remove(tmpFile)
 
 	env := e.buildWorkerEnv(req.EnvVars)
 
+	// Install pip dependencies if provided
+	if req.Dependencies != "" {
+		depsDir, err := installDeps(ctx, "python", req.Dependencies, req.PackageManager, pyBin, env)
+		if err != nil {
+			return &ExecutionResult{
+				StatusCode: 500,
+				Error:      "install deps: " + err.Error(),
+			}, nil
+		}
+		env = append(env, "PYTHONPATH="+depsDir)
+	}
+
 	stdout := e.getBuf()
 	stderr := e.getBuf()
 	defer e.putBuf(stdout)
 	defer e.putBuf(stderr)
 
-	cmd := exec.CommandContext(ctx, "python3", tmpFile)
+	cmd := exec.CommandContext(ctx, pyBin, tmpFile)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

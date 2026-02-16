@@ -141,6 +141,7 @@ wkr-cli init [options]
 
 --name <name>        Worker name (creates subfolder if set, otherwise uses current dir)
 --runtime <rt>       Runtime: go, javascript, typescript, python (default: javascript)
+--runtime-version <v> Runtime version: e.g. 1.24, 3.12, 22
 --template <tpl>     Use a prebuilt template
 --list-templates     List available templates
 ```
@@ -213,12 +214,73 @@ The `-f` flag uses WebSocket with auto-reconnect — survives network blips and 
 ### Project Config (wkr.yaml)
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cubetiqlabs/wkr/main/schemas/wkr.schema.json
 name: my-worker
 runtime: python
+runtime_version: "3.12"       # optional: specific runtime version (e.g. 1.24, 3.12, 22)
 entry_point: main
 main: worker.py
+package_manager: pip          # optional: npm, yarn, pnpm, bun, deno, pip, uv, go (auto-detected)
 env_vars:
   API_KEY: secret123
+```
+
+A JSON Schema is provided at `schemas/wkr.schema.json` for auto-completion and validation in any editor. Works automatically in VS Code (with Red Hat YAML extension), JetBrains IDEs, Neovim (yaml-language-server), and any editor supporting the `# yaml-language-server` directive.
+
+#### Schema Setup
+
+**VS Code** — works out of the box via `.vscode/settings.json` (included in repo). Just install the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml).
+
+**JetBrains (IntelliJ, WebStorm, GoLand)** — auto-detects from the `# yaml-language-server` comment in generated `wkr.yaml` files, or configure manually: Settings → Languages & Frameworks → Schemas and DTDs → JSON Schema Mappings → add `schemas/wkr.schema.json` for `wkr.yaml`.
+
+**Neovim / Any LSP editor** — the `# yaml-language-server` comment at the top of `wkr.yaml` activates the schema automatically when using yaml-language-server.
+
+**New projects** — `wkr init` automatically adds the schema comment to generated `wkr.yaml` files. For existing projects, add this as the first line:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cubetiqlabs/wkr/main/schemas/wkr.schema.json
+```
+
+### Runtime Versions
+
+Pin a specific runtime version in `wkr.yaml`. The platform looks for a versioned binary on PATH and falls back to the system default.
+
+| Runtime    | `runtime_version` | Binary looked up     | Install method                                      |
+| ---------- | ----------------- | -------------------- | --------------------------------------------------- |
+| go         | `1.24`            | `go1.24`             | `go install golang.org/dl/go1.24@latest && go1.24 download` |
+| python     | `3.12`            | `python3.12`         | pyenv, system package manager, or deadsnakes PPA    |
+| javascript | `22`              | `node22`             | nvm, fnm, or symlink                                |
+| typescript | `22`              | `node22`             | nvm, fnm, or symlink                                |
+
+### Dependencies
+
+Dependencies are auto-detected and installed before both `wkr dev` and `wkr deploy`:
+
+| Runtime    | Detected file        | Default PM | Supported PMs              |
+| ---------- | -------------------- | ---------- | -------------------------- |
+| javascript | `package.json`       | npm        | npm, yarn, pnpm, bun, deno |
+| typescript | `package.json`       | npm        | npm, yarn, pnpm, bun, deno |
+| python     | `requirements.txt`   | pip        | pip, uv                    |
+| go         | `go.mod`             | go         | go                         |
+
+The package manager is auto-detected from lockfiles:
+
+| Lockfile            | Detected PM |
+| ------------------- | ----------- |
+| `deno.lock`         | deno        |
+| `deno.json`         | deno        |
+| `pnpm-lock.yaml`    | pnpm        |
+| `yarn.lock`         | yarn        |
+| `bun.lockb`         | bun         |
+| `package-lock.json` | npm         |
+
+Override with `package_manager` in `wkr.yaml`:
+
+```yaml
+name: my-api
+runtime: javascript
+main: worker.js
+package_manager: pnpm
 ```
 
 ### Revisions & Rollback

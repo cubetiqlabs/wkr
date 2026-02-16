@@ -190,17 +190,20 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 	}()
 
 	req := &runtime.ExecutionRequest{
-		WorkerName: worker.Name,
-		Code:       worker.Code,
-		CodeHash:   worker.CodeHash,
-		Runtime:    string(worker.Runtime),
-		EntryPoint: worker.EntryPoint,
-		EnvVars:    worker.EnvVars,
-		Payload:    reqBody,
-		Headers:    headers,
-		Method:     c.Method(),
-		Path:       reqPath,
-		Query:      string(c.Request().URI().QueryString()),
+		WorkerName:     worker.Name,
+		Code:           worker.Code,
+		CodeHash:       worker.CodeHash,
+		Runtime:        string(worker.Runtime),
+		RuntimeVersion: worker.RuntimeVersion,
+		EntryPoint:     worker.EntryPoint,
+		Dependencies:   worker.Dependencies,
+		PackageManager: worker.PackageManager,
+		EnvVars:        worker.EnvVars,
+		Payload:        reqBody,
+		Headers:        headers,
+		Method:         c.Method(),
+		Path:           reqPath,
+		Query:          string(c.Request().URI().QueryString()),
 	}
 
 	result, err := h.pool.Execute(c.Context(), req)

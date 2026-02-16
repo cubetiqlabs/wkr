@@ -25,18 +25,21 @@ func (b *Base) BeforeCreate(tx *gorm.DB) error {
 // Worker represents a serverless function deployment.
 type Worker struct {
 	Base
-	Name        string        `gorm:"size:255;not null;uniqueIndex:idx_owner_worker_name" json:"name" validate:"required,min=3,max=255"`
-	Runtime     RuntimeType   `gorm:"size:20;not null" json:"runtime" validate:"required,oneof=go javascript typescript python"`
-	EntryPoint  string        `gorm:"size:255;not null;default:'main'" json:"entry_point"`
-	Code        string        `gorm:"type:text;not null" json:"code" validate:"required"`
-	CodeHash    string        `gorm:"size:64;not null" json:"code_hash"`
-	Version     int           `gorm:"not null;default:1" json:"version"`
-	Status      WorkerStatus  `gorm:"size:20;not null;default:'inactive'" json:"status"`
-	Timeout     time.Duration `gorm:"not null;default:30000000000" json:"timeout"` // 30s default
-	MemoryLimit int           `gorm:"not null;default:128" json:"memory_limit"`    // MB
-	EnvVars     JSONMap       `gorm:"type:jsonb;default:'{}'" json:"env_vars"`
-	OwnerID     uuid.UUID     `gorm:"type:uuid;not null;index;uniqueIndex:idx_owner_worker_name" json:"owner_id"`
-	Owner       *User         `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
+	Name           string        `gorm:"size:255;not null;uniqueIndex:idx_owner_worker_name" json:"name" validate:"required,min=3,max=255"`
+	Runtime        RuntimeType   `gorm:"size:20;not null" json:"runtime" validate:"required,oneof=go javascript typescript python"`
+	RuntimeVersion string        `gorm:"size:20;not null;default:''" json:"runtime_version,omitempty"` // e.g. "1.24", "3.12", "22"
+	EntryPoint     string        `gorm:"size:255;not null;default:'main'" json:"entry_point"`
+	Code           string        `gorm:"type:text;not null" json:"code" validate:"required"`
+	CodeHash       string        `gorm:"size:64;not null" json:"code_hash"`
+	Dependencies   string        `gorm:"type:text;not null;default:''" json:"dependencies,omitempty"`    // package manifest content
+	PackageManager string        `gorm:"size:20;not null;default:''" json:"package_manager,omitempty"`   // npm, yarn, pnpm, deno, pip, uv, go
+	Version        int           `gorm:"not null;default:1" json:"version"`
+	Status         WorkerStatus  `gorm:"size:20;not null;default:'inactive'" json:"status"`
+	Timeout        time.Duration `gorm:"not null;default:30000000000" json:"timeout"` // 30s default
+	MemoryLimit    int           `gorm:"not null;default:128" json:"memory_limit"`    // MB
+	EnvVars        JSONMap       `gorm:"type:jsonb;default:'{}'" json:"env_vars"`
+	OwnerID        uuid.UUID     `gorm:"type:uuid;not null;index;uniqueIndex:idx_owner_worker_name" json:"owner_id"`
+	Owner          *User         `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
 }
 
 type RuntimeType string
@@ -59,15 +62,16 @@ const (
 // Deployment tracks each deployment of a worker.
 type Deployment struct {
 	Base
-	WorkerID   uuid.UUID        `gorm:"type:uuid;not null;index" json:"worker_id"`
-	Worker     *Worker          `gorm:"foreignKey:WorkerID" json:"worker,omitempty"`
-	Version    int              `gorm:"not null" json:"version"`
-	Code       string           `gorm:"type:text;not null" json:"code,omitempty"`
-	EntryPoint string           `gorm:"size:255;not null;default:'main'" json:"entry_point"`
-	CodeHash   string           `gorm:"size:64;not null" json:"code_hash"`
-	EnvVars    JSONMap           `gorm:"type:jsonb;default:'{}'" json:"env_vars,omitempty"`
-	Status     DeploymentStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
-	DeployedBy uuid.UUID        `gorm:"type:uuid;not null" json:"deployed_by"`
+	WorkerID       uuid.UUID        `gorm:"type:uuid;not null;index" json:"worker_id"`
+	Worker         *Worker          `gorm:"foreignKey:WorkerID" json:"worker,omitempty"`
+	Version        int              `gorm:"not null" json:"version"`
+	Code           string           `gorm:"type:text;not null" json:"code,omitempty"`
+	EntryPoint     string           `gorm:"size:255;not null;default:'main'" json:"entry_point"`
+	CodeHash       string           `gorm:"size:64;not null" json:"code_hash"`
+	Dependencies   string           `gorm:"type:text;not null;default:''" json:"dependencies,omitempty"`
+	EnvVars        JSONMap          `gorm:"type:jsonb;default:'{}'" json:"env_vars,omitempty"`
+	Status         DeploymentStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
+	DeployedBy     uuid.UUID        `gorm:"type:uuid;not null" json:"deployed_by"`
 }
 
 type DeploymentStatus string

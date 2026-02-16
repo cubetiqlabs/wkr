@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/cubetiqlabs/wkr/main/schemas/wkr.schema.json",
+  "title": "Cubis Workers Config",
+  "description": "Configuration file for Cubis Workers (wkr) projects. Used by wkr-cli for deploy, dev, and init commands.",
+  "type": "object",
+  "required": ["name", "runtime", "main"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Worker name. Must be 3–255 characters. Used as the deployment identifier and in the invoke URL.",
+      "minLength": 3,
+      "maxLength": 255,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+      "examples": ["my-worker", "hello-world", "api-gateway"]
+    },
+    "runtime": {
+      "type": "string",
+      "description": "Execution runtime for the worker.",
+      "enum": ["go", "javascript", "typescript", "python"],
+      "examples": ["javascript"]
+    },
+    "runtime_version": {
+      "type": "string",
+      "description": "Specific runtime version to use. When set, the platform looks for a versioned binary on PATH (e.g. go1.24, python3.12, node22). Falls back to the system default if not found.",
+      "examples": ["1.24", "1.25", "3.11", "3.12", "22", "24"]
+    },
+    "entry_point": {
+      "type": "string",
+      "description": "Name of the function to invoke as the worker entry point.",
+      "default": "main",
+      "examples": ["main", "handler", "run"]
+    },
+    "main": {
+      "type": "string",
+      "description": "Path to the worker source file, relative to the project root.",
+      "examples": ["worker.js", "worker.ts", "worker.py", "worker.go"]
+    },
+    "package_manager": {
+      "type": "string",
+      "description": "Package manager for dependency installation. Auto-detected from lockfiles if not set (e.g. deno.lock → deno, yarn.lock → yarn, pnpm-lock.yaml → pnpm).",
+      "enum": ["npm", "yarn", "pnpm", "bun", "deno", "pip", "uv", "go"],
+      "examples": ["deno", "npm"]
+    },
+    "env_vars": {
+      "type": "object",
+      "description": "Environment variables injected into the worker at runtime. Encrypted at rest on the server. Accessible via env(key) helper in all runtimes.",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "examples": [
+        {
+          "API_KEY": "sk-...",
+          "DATABASE_URL": "postgres://..."
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "runtime": { "const": "javascript" } }
+      },
+      "then": {
+        "properties": {
+          "main": {
+            "pattern": "\\.m?[jt]sx?$",
+            "examples": ["worker.js"]
+          },
+          "runtime_version": {
+            "description": "Node.js major version (e.g. 22, 24). Looks for node22/node24 on PATH.",
+            "examples": ["22", "24"]
+          },
+          "package_manager": {
+            "enum": ["npm", "yarn", "pnpm", "bun", "deno"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "runtime": { "const": "typescript" } }
+      },
+      "then": {
+        "properties": {
+          "main": {
+            "pattern": "\\.tsx?$",
+            "examples": ["worker.ts"]
+          },
+          "runtime_version": {
+            "description": "Node.js major version (e.g. 22, 24). Looks for node22/node24 on PATH.",
+            "examples": ["22", "24"]
+          },
+          "package_manager": {
+            "enum": ["npm", "yarn", "pnpm", "bun", "deno"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "runtime": { "const": "python" } }
+      },
+      "then": {
+        "properties": {
+          "main": {
+            "pattern": "\\.py$",
+            "examples": ["worker.py"]
+          },
+          "runtime_version": {
+            "description": "Python minor version (e.g. 3.11, 3.12). Looks for python3.11/python3.12 on PATH.",
+            "examples": ["3.11", "3.12", "3.13"]
+          },
+          "package_manager": {
+            "enum": ["pip", "uv"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "runtime": { "const": "go" } }
+      },
+      "then": {
+        "properties": {
+          "main": {
+            "pattern": "\\.go$",
+            "examples": ["worker.go"]
+          },
+          "runtime_version": {
+            "description": "Go minor version (e.g. 1.24, 1.25). Looks for go1.24/go1.25 on PATH (install via golang.org/dl).",
+            "examples": ["1.24", "1.25"]
+          },
+          "package_manager": {
+            "enum": ["go"]
+          }
+        }
+      }
+    }
+  ]
+}

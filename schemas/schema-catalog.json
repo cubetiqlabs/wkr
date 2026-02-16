@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/schema-catalog.json",
+  "version": 1,
+  "schemas": [
+    {
+      "name": "Cubis Workers Config",
+      "description": "Configuration for Cubis Workers (wkr) projects",
+      "fileMatch": ["wkr.yaml", "wkr.yml"],
+      "url": "./wkr.schema.json"
+    }
+  ]
+}

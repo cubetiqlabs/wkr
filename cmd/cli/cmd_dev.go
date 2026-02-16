@@ -21,6 +21,9 @@ func cmdDev() {
 
 	cfg := loadConfig()
 
+	// Auto-detect and install dependencies before running
+	installLocalDeps(cfg)
+
 	code, err := os.ReadFile(cfg.Main)
 	if err != nil {
 		fatal("cannot read source file: " + cfg.Main)
@@ -46,11 +49,11 @@ func cmdDev() {
 	var out []byte
 	switch cfg.Runtime {
 	case "go":
-		out, err = runGoLocal(string(code), cfg.EntryPoint, cfg.EnvVars, payload)
+		out, err = runGoLocal(string(code), cfg.EntryPoint, cfg.RuntimeVersion, cfg.EnvVars, payload)
 	case "javascript", "typescript":
-		out, err = runJSLocal(string(code), cfg.EntryPoint, cfg.EnvVars, payload)
+		out, err = runJSLocal(string(code), cfg.EntryPoint, cfg.Runtime, cfg.RuntimeVersion, cfg.EnvVars, payload)
 	case "python":
-		out, err = runPyLocal(string(code), cfg.EntryPoint, cfg.EnvVars, payload)
+		out, err = runPyLocal(string(code), cfg.EntryPoint, cfg.RuntimeVersion, cfg.EnvVars, payload)
 	default:
 		fatal("unsupported runtime: " + cfg.Runtime)
 	}
@@ -68,12 +71,10 @@ func cmdDev() {
 	}
 }
 
-func runJSLocal(code, entryPoint string, envVars map[string]string, payload []byte) ([]byte, error) {
-	// Detect runtime
-	rt := "node"
-	if _, err := exec.LookPath("deno"); err == nil {
-		rt = "deno"
-	}
+func runJSLocal(code, entryPoint, runtime, version string, envVars map[string]string, payload []byte) ([]byte, error) {
+	// Detect runtime, prefer versioned binary
+	rt := resolveLocalRuntime(runtime, version)
+	isDeno := strings.Contains(rt, "deno")
 
 	// Minimal wrapper: read stdin, call entrypoint, write result
 	wrapped := fmt.Sprintf(`
@@ -88,8 +89,22 @@ function jsonParse(s,f){try{return JSON.parse(s)}catch(_){return f!==undefined?f
 ;(async()=>{const payload=jsonParse(await __readStdin(),{});let result=%s(payload);if(result instanceof Promise)result=await result;const output=JSON.stringify(result);try{process.stdout.write(output)}catch(_){try{Deno.stdout.writeSync(new TextEncoder().encode(output))}catch(_){}}})();
 `, code, entryPoint)
 
+	// Check if node_modules exists in cwd (user ran npm/deno install locally)
+	hasNodeModules := false
+	if _, err := os.Stat("node_modules"); err == nil {
+		hasNodeModules = true
+	}
+
+	// Deno resolves node_modules relative to the file URL, so the file must
+	// live in the same directory as node_modules and be referenced by relative name.
+	const devFile = ".wkr-dev.mjs"
+
 	var args []string
-	if rt == "deno" {
+	if isDeno && hasNodeModules {
+		os.WriteFile(devFile, []byte(wrapped), 0644)
+		defer os.Remove(devFile)
+		args = []string{"run", "--allow-env", "--allow-read", "--allow-net=0.0.0.0", "--node-modules-dir=auto", devFile}
+	} else if isDeno {
 		args = []string{"eval", "--no-remote", wrapped}
 	} else {
 		tmp := filepath.Join(os.TempDir(), "wkr-dev.mjs")
@@ -119,7 +134,8 @@ function jsonParse(s,f){try{return JSON.parse(s)}catch(_){return f!==undefined?f
 	return stdout.Bytes(), nil
 }
 
-func runGoLocal(code, entryPoint string, envVars map[string]string, payload []byte) ([]byte, error) {
+func runGoLocal(code, entryPoint, version string, envVars map[string]string, payload []byte) ([]byte, error) {
+	goBin := resolveLocalRuntime("go", version)
 	// Write wrapped source to temp file and go run it
 	wrapped := wrapGoLocal(code, entryPoint)
 	tmp := filepath.Join(os.TempDir(), "wkr-dev.go")
@@ -128,7 +144,7 @@ func runGoLocal(code, entryPoint string, envVars map[string]string, payload []by
 	}
 	defer os.Remove(tmp)
 
-	cmd := exec.Command("go", "run", tmp)
+	cmd := exec.Command(goBin, "run", tmp)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = buildLocalEnv(envVars)
 
@@ -235,7 +251,38 @@ func buildLocalEnv(envVars map[string]string) []string {
 	return env
 }
 
-func runPyLocal(code, entryPoint string, envVars map[string]string, payload []byte) ([]byte, error) {
+// resolveLocalRuntime returns a versioned binary name if available, else the default.
+func resolveLocalRuntime(rt, version string) string {
+	if version != "" {
+		switch rt {
+		case "go":
+			if p, err := exec.LookPath("go" + version); err == nil {
+				return p
+			}
+		case "python":
+			if p, err := exec.LookPath("python" + version); err == nil {
+				return p
+			}
+		case "javascript", "typescript":
+			if p, err := exec.LookPath("node" + version); err == nil {
+				return p
+			}
+		}
+	}
+	switch rt {
+	case "go":
+		return "go"
+	case "python":
+		return "python3"
+	default:
+		if _, err := exec.LookPath("deno"); err == nil {
+			return "deno"
+		}
+		return "node"
+	}
+}
+
+func runPyLocal(code, entryPoint, version string, envVars map[string]string, payload []byte) ([]byte, error) {
 	wrapped := fmt.Sprintf(`import sys, json, os
 
 print = lambda *a, **kw: __builtins__.__import__('builtins').print(*a, **{**kw, 'file': kw.get('file', sys.stderr)})
@@ -258,7 +305,8 @@ sys.stdout.write(output)
 	os.WriteFile(tmp, []byte(wrapped), 0644)
 	defer os.Remove(tmp)
 
-	cmd := exec.Command("python3", tmp)
+	pyBin := resolveLocalRuntime("python", version)
+	cmd := exec.Command(pyBin, tmp)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = buildLocalEnv(envVars)
 

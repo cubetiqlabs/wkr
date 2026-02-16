@@ -49,18 +49,24 @@ func NewWorkerService(
 }
 
 type CreateWorkerInput struct {
-	Name       string            `json:"name" validate:"required,min=3,max=255"`
-	Runtime    model.RuntimeType `json:"runtime" validate:"required,oneof=go javascript typescript python"`
-	EntryPoint string            `json:"entry_point"`
-	Code       string            `json:"code" validate:"required"`
-	EnvVars    model.JSONMap     `json:"env_vars"`
+	Name           string            `json:"name" validate:"required,min=3,max=255"`
+	Runtime        model.RuntimeType `json:"runtime" validate:"required,oneof=go javascript typescript python"`
+	RuntimeVersion string            `json:"runtime_version"`
+	EntryPoint     string            `json:"entry_point"`
+	Code           string            `json:"code" validate:"required"`
+	Dependencies   string            `json:"dependencies"`
+	PackageManager string            `json:"package_manager"`
+	EnvVars        model.JSONMap     `json:"env_vars"`
 }
 
 type UpdateWorkerInput struct {
-	Runtime    *model.RuntimeType `json:"runtime"`
-	Code       *string            `json:"code"`
-	EntryPoint *string            `json:"entry_point"`
-	EnvVars    model.JSONMap      `json:"env_vars"`
+	Runtime        *model.RuntimeType `json:"runtime"`
+	RuntimeVersion *string            `json:"runtime_version"`
+	Code           *string            `json:"code"`
+	EntryPoint     *string            `json:"entry_point"`
+	Dependencies   *string            `json:"dependencies"`
+	PackageManager *string            `json:"package_manager"`
+	EnvVars        model.JSONMap      `json:"env_vars"`
 }
 
 func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input CreateWorkerInput) (*model.Worker, error) {
@@ -74,7 +80,7 @@ func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input Cre
 	}
 
 	// Pre-deploy verification: compile/syntax check
-	if err := s.verifyCode(ctx, input.Code, string(input.Runtime), entryPoint); err != nil {
+	if err := s.verifyCode(ctx, input.Code, string(input.Runtime), input.RuntimeVersion, entryPoint, input.Dependencies, input.PackageManager); err != nil {
 		return nil, err
 	}
 
@@ -89,15 +95,18 @@ func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input Cre
 	}
 
 	w := &model.Worker{
-		Name:       input.Name,
-		Runtime:    input.Runtime,
-		EntryPoint: entryPoint,
-		Code:       input.Code,
-		CodeHash:   hashCode(input.Code),
-		Version:    1,
-		Status:     model.WorkerStatusActive,
-		EnvVars:    envVars,
-		OwnerID:    ownerID,
+		Name:           input.Name,
+		Runtime:        input.Runtime,
+		RuntimeVersion: input.RuntimeVersion,
+		EntryPoint:     entryPoint,
+		Code:           input.Code,
+		CodeHash:       hashCode(input.Code),
+		Dependencies:   input.Dependencies,
+		PackageManager: input.PackageManager,
+		Version:        1,
+		Status:         model.WorkerStatusActive,
+		EnvVars:        envVars,
+		OwnerID:        ownerID,
 	}
 
 	if err := s.workerRepo.Create(ctx, w); err != nil {
@@ -105,14 +114,15 @@ func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input Cre
 	}
 
 	dep := &model.Deployment{
-		WorkerID:   w.ID,
-		Version:    1,
-		Code:       input.Code,
-		EntryPoint: entryPoint,
-		CodeHash:   w.CodeHash,
-		EnvVars:    envVars,
-		Status:     model.DeploymentActive,
-		DeployedBy: ownerID,
+		WorkerID:     w.ID,
+		Version:      1,
+		Code:         input.Code,
+		EntryPoint:   entryPoint,
+		CodeHash:     w.CodeHash,
+		Dependencies: input.Dependencies,
+		EnvVars:      envVars,
+		Status:       model.DeploymentActive,
+		DeployedBy:   ownerID,
 	}
 	if err := s.deploymentRepo.Create(ctx, dep); err != nil {
 		logger.Error("failed to record deployment", zap.Error(err))
@@ -157,6 +167,15 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 	if input.Runtime != nil {
 		w.Runtime = *input.Runtime
 	}
+	if input.RuntimeVersion != nil {
+		w.RuntimeVersion = *input.RuntimeVersion
+	}
+	if input.Dependencies != nil {
+		w.Dependencies = *input.Dependencies
+	}
+	if input.PackageManager != nil {
+		w.PackageManager = *input.PackageManager
+	}
 
 	if input.Code != nil {
 		// Pre-deploy verification: compile/syntax check
@@ -164,7 +183,7 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 		if input.EntryPoint != nil {
 			ep = *input.EntryPoint
 		}
-		if err := s.verifyCode(ctx, *input.Code, string(w.Runtime), ep); err != nil {
+		if err := s.verifyCode(ctx, *input.Code, string(w.Runtime), w.RuntimeVersion, ep, w.Dependencies, w.PackageManager); err != nil {
 			return nil, err
 		}
 		w.Code = *input.Code
@@ -192,14 +211,15 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 
 	if input.Code != nil {
 		dep := &model.Deployment{
-			WorkerID:   w.ID,
-			Version:    w.Version,
-			Code:       w.Code,
-			EntryPoint: w.EntryPoint,
-			CodeHash:   w.CodeHash,
-			EnvVars:    w.EnvVars,
-			Status:     model.DeploymentActive,
-			DeployedBy: ownerID,
+			WorkerID:     w.ID,
+			Version:      w.Version,
+			Code:         w.Code,
+			EntryPoint:   w.EntryPoint,
+			CodeHash:     w.CodeHash,
+			Dependencies: w.Dependencies,
+			EnvVars:      w.EnvVars,
+			Status:       model.DeploymentActive,
+			DeployedBy:   ownerID,
 		}
 		if err := s.deploymentRepo.Create(ctx, dep); err != nil {
 			logger.Error("failed to record deployment", zap.Error(err))
@@ -305,6 +325,7 @@ func (s *WorkerService) Rollback(ctx context.Context, name string, ownerID uuid.
 	w.Code = dep.Code
 	w.EntryPoint = dep.EntryPoint
 	w.CodeHash = dep.CodeHash
+	w.Dependencies = dep.Dependencies
 	w.EnvVars = dep.EnvVars
 	w.Version++
 
@@ -317,14 +338,15 @@ func (s *WorkerService) Rollback(ctx context.Context, name string, ownerID uuid.
 
 	// Record new deployment for the rollback
 	newDep := &model.Deployment{
-		WorkerID:   w.ID,
-		Version:    w.Version,
-		Code:       w.Code,
-		EntryPoint: w.EntryPoint,
-		CodeHash:   w.CodeHash,
-		EnvVars:    w.EnvVars,
-		Status:     model.DeploymentActive,
-		DeployedBy: ownerID,
+		WorkerID:     w.ID,
+		Version:      w.Version,
+		Code:         w.Code,
+		EntryPoint:   w.EntryPoint,
+		CodeHash:     w.CodeHash,
+		Dependencies: w.Dependencies,
+		EnvVars:      w.EnvVars,
+		Status:       model.DeploymentActive,
+		DeployedBy:   ownerID,
 	}
 	if err := s.deploymentRepo.Create(ctx, newDep); err != nil {
 		logger.Error("failed to record rollback deployment", zap.Error(err))
@@ -334,11 +356,11 @@ func (s *WorkerService) Rollback(ctx context.Context, name string, ownerID uuid.
 	return w, nil
 }
 
-func (s *WorkerService) verifyCode(ctx context.Context, code, rt, entryPoint string) error {
+func (s *WorkerService) verifyCode(ctx context.Context, code, rt, version, entryPoint, deps, pm string) error {
 	if s.engine == nil {
 		return nil
 	}
-	if err := s.engine.Verify(ctx, code, rt, entryPoint); err != nil {
+	if err := s.engine.VerifyWithVersion(ctx, code, rt, version, entryPoint, deps, pm); err != nil {
 		return fmt.Errorf("verification failed: %w", err)
 	}
 	return nil

@@ -18,34 +18,47 @@ func cmdDeploy() {
 		fatal("cannot read source file: " + cfg.Main)
 	}
 
+	// Auto-detect and install dependencies
+	deps, _ := installLocalDeps(cfg)
+
+	pm := detectPackageManager(cfg)
+
 	payload := map[string]interface{}{
-		"name":        cfg.Name,
-		"runtime":     cfg.Runtime,
-		"entry_point": cfg.EntryPoint,
-		"code":        string(code),
+		"name":            cfg.Name,
+		"runtime":         cfg.Runtime,
+		"runtime_version": cfg.RuntimeVersion,
+		"entry_point":     cfg.EntryPoint,
+		"code":            string(code),
+		"dependencies":    deps,
+		"package_manager": pm,
 	}
 	if len(cfg.EnvVars) > 0 {
 		payload["env_vars"] = cfg.EnvVars
 	}
 
-	fmt.Printf("Deploying %s (%s)...\n", cfg.Name, cfg.Runtime)
+	rt := cfg.Runtime
+	if cfg.RuntimeVersion != "" {
+		rt += " " + cfg.RuntimeVersion
+	}
+	fmt.Printf("Deploying %s (%s)...\n", cfg.Name, rt)
 
 	// Try update first (PUT), fall back to create (POST)
 	url := creds.APIURL + "/api/v1/workers"
 	resp, err := apiRequest("PUT", url+"/by-name/"+cfg.Name, creds.Token, map[string]interface{}{
-		"runtime":     cfg.Runtime,
-		"code":        string(code),
-		"entry_point": cfg.EntryPoint,
-		"env_vars":    cfg.EnvVars,
+		"runtime":         cfg.Runtime,
+		"runtime_version": cfg.RuntimeVersion,
+		"code":            string(code),
+		"entry_point":     cfg.EntryPoint,
+		"dependencies":    deps,
+		"package_manager": pm,
+		"env_vars":        cfg.EnvVars,
 	})
 
 	action := "updated"
 	if err != nil || !resp.Success {
 		if err == nil && resp.Error != "" && resp.Error != "worker not found" {
-			// Real error (verification failed, etc.) — don't fall through to create
 			fatal("deploy failed: " + resp.Error)
 		}
-		// Worker doesn't exist yet — create it
 		resp, err = apiRequest("POST", url, creds.Token, payload)
 		if err != nil {
 			fatal(err.Error())

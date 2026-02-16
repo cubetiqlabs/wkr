@@ -10,11 +10,13 @@ import (
 )
 
 type WorkerConfig struct {
-	Name       string            `yaml:"name"`
-	Runtime    string            `yaml:"runtime"`
-	EntryPoint string            `yaml:"entry_point"`
-	Main       string            `yaml:"main"`
-	EnvVars    map[string]string `yaml:"env_vars,omitempty"`
+	Name           string            `yaml:"name"`
+	Runtime        string            `yaml:"runtime"`
+	RuntimeVersion string            `yaml:"runtime_version,omitempty"`
+	EntryPoint     string            `yaml:"entry_point"`
+	Main           string            `yaml:"main"`
+	PackageManager string            `yaml:"package_manager,omitempty"` // npm, yarn, pnpm, deno, pip, uv, go (auto-detected if empty)
+	EnvVars        map[string]string `yaml:"env_vars,omitempty"`
 }
 
 const configFile = "wkr.yaml"
@@ -70,7 +72,8 @@ func main(req map[string]interface{}) map[string]interface{} {
 func cmdInit() {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	name := fs.String("name", "", "Worker name (creates subfolder if set)")
-	runtime := fs.String("runtime", "", "Runtime: go, javascript, typescript")
+	runtime := fs.String("runtime", "", "Runtime: go, javascript, typescript, python")
+	version := fs.String("runtime-version", "", "Runtime version: e.g. 1.24, 3.12, 22")
 	tmpl := fs.String("template", "", "Template: hello-js, hello-ts, hello-go, json-api, cron, proxy")
 	listTmpl := fs.Bool("list-templates", false, "List available templates")
 	fs.Parse(os.Args[2:])
@@ -117,14 +120,17 @@ func cmdInit() {
 	mainFile := "worker" + ext[*runtime]
 
 	cfg := WorkerConfig{
-		Name:       *name,
-		Runtime:    *runtime,
-		EntryPoint: "main",
-		Main:       mainFile,
+		Name:           *name,
+		Runtime:        *runtime,
+		RuntimeVersion: *version,
+		EntryPoint:     "main",
+		Main:           mainFile,
 	}
 
 	data, _ := yaml.Marshal(cfg)
-	if err := os.WriteFile(configFile, data, 0644); err != nil {
+	// Prepend schema comment for editor auto-completion
+	content := "# yaml-language-server: $schema=https://raw.githubusercontent.com/cubetiqlabs/wkr/main/schemas/wkr.schema.json\n" + string(data)
+	if err := os.WriteFile(configFile, []byte(content), 0644); err != nil {
 		fatal("failed to write " + configFile + ": " + err.Error())
 	}
 
