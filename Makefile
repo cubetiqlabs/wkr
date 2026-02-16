@@ -3,12 +3,17 @@
 APP_NAME := wkr
 CLI_NAME := wkr
 BUILD_DIR := ./bin
+CLI_VERSION := $(shell git describe --tags --match 'wkr-cli-v*' --abbrev=0 2>/dev/null | sed 's/^wkr-cli-v//')
+ifeq ($(CLI_VERSION),)
+CLI_VERSION := dev
+endif
+LDFLAGS := -s -w -X main.version=$(CLI_VERSION)
 
 build:
 	go build -ldflags="-s -w" -o $(BUILD_DIR)/$(APP_NAME) ./cmd/server
 
 build-cli:
-	go build -ldflags="-s -w" -o $(BUILD_DIR)/$(CLI_NAME) ./cmd/cli
+	go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(CLI_NAME) ./cmd/cli
 
 build-all: build build-cli
 

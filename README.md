@@ -79,6 +79,7 @@ wkr update
 | `whoami`           | Show current authenticated user          |
 | `init`             | Initialize a new worker project          |
 | `deploy`           | Deploy the current worker to the platform|
+| `info`             | Show worker deploy info                  |
 | `dev`              | Run worker locally (no deploy needed)    |
 | `list`, `ls`       | List your deployed workers               |
 | `invoke`           | Invoke a worker by name                  |
@@ -87,6 +88,7 @@ wkr update
 | `rollback`         | Rollback a worker to a specific version  |
 | `logs`             | View invocation logs for a worker        |
 | `update`, `upgrade`| Update wkr to the latest version         |
+| `usage`            | Show account usage and quota              |
 
 ### Workflow
 
@@ -107,30 +109,33 @@ wkr-cli init --runtime python
 cd my-worker
 wkr-cli deploy
 
-# 6. Run locally without deploying
+# 6. View deploy info
+wkr-cli info
+
+# 7. Run locally without deploying
 wkr-cli dev --body '{"name":"test"}' --query 'page=1'
 
-# 7. Invoke remotely
+# 8. Invoke remotely
 wkr-cli invoke my-worker
 
-# 8. View logs (recent or real-time)
+# 9. View logs (recent or real-time)
 wkr-cli logs my-worker
 wkr-cli logs my-worker -f
 wkr-cli logs my-worker -f -v
 
-# 9. View revision history
+# 10. View revision history
 wkr-cli revisions my-worker
 
-# 10. Rollback to a previous version
+# 11. Rollback to a previous version
 wkr-cli rollback my-worker --version 1
 
-# 11. List all workers
+# 12. List all workers
 wkr-cli list
 
-# 12. Delete
+# 13. Delete
 wkr-cli delete my-worker
 
-# 13. Logout
+# 14. Logout
 wkr-cli logout
 ```
 
@@ -329,6 +334,7 @@ POST /api/v1/invoke/@dev/my-api/v1/users/123
 | PUT    | `/api/v1/workers/:id`                     | Update a worker              |
 | DELETE | `/api/v1/workers/:id`                     | Delete a worker              |
 | PUT    | `/api/v1/workers/by-name/:name`           | Update a worker by name      |
+| GET    | `/api/v1/workers/by-name/:name`           | Get a worker by name         |
 | DELETE | `/api/v1/workers/by-name/:name`           | Delete a worker by name      |
 | GET    | `/api/v1/workers/by-name/:name/revisions` | List deployment revisions    |
 | POST   | `/api/v1/workers/by-name/:name/rollback`  | Rollback to a version        |
