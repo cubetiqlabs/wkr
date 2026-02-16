@@ -70,16 +70,42 @@ func cmdDeploy() {
 	}
 
 	var worker struct {
-		Name    string `json:"name"`
-		Version int    `json:"version"`
-		Status  string `json:"status"`
+		Name           string `json:"name"`
+		Runtime        string `json:"runtime"`
+		RuntimeVersion string `json:"runtime_version"`
+		EntryPoint     string `json:"entry_point"`
+		CodeHash       string `json:"code_hash"`
+		PackageManager string `json:"package_manager"`
+		Version        int    `json:"version"`
+		Status         string `json:"status"`
+		MemoryLimit    int    `json:"memory_limit"`
+		UpdatedAt      string `json:"updated_at"`
 	}
 	json.Unmarshal(resp.Data, &worker)
 
-	fmt.Printf("✓ Worker %s %s (v%d, %s)\n", worker.Name, action, worker.Version, worker.Status)
+	fmt.Printf("\n✓ Worker %s %s\n\n", worker.Name, action)
+
+	invokeURL := creds.APIURL + "/api/v1/invoke/"
 	if creds.Username != "" {
-		fmt.Printf("→ Invoke: %s/api/v1/invoke/@%s/%s\n", creds.APIURL, creds.Username, cfg.Name)
-	} else {
-		fmt.Printf("→ Invoke: %s/api/v1/invoke/%s\n", creds.APIURL, cfg.Name)
+		invokeURL += "@" + creds.Username + "/"
 	}
+	invokeURL += cfg.Name
+
+	rt = worker.Runtime
+	if worker.RuntimeVersion != "" {
+		rt += " " + worker.RuntimeVersion
+	}
+
+	fmt.Printf("  %-16s %s\n", "Name:", worker.Name)
+	fmt.Printf("  %-16s v%d\n", "Version:", worker.Version)
+	fmt.Printf("  %-16s %s\n", "Status:", worker.Status)
+	fmt.Printf("  %-16s %s\n", "Runtime:", rt)
+	fmt.Printf("  %-16s %s\n", "Entry point:", worker.EntryPoint)
+	fmt.Printf("  %-16s %s\n", "Code hash:", worker.CodeHash[:12])
+	if worker.PackageManager != "" {
+		fmt.Printf("  %-16s %s\n", "Package mgr:", worker.PackageManager)
+	}
+	fmt.Printf("  %-16s %d MB\n", "Memory limit:", worker.MemoryLimit)
+	fmt.Printf("  %-16s %s\n", "Deployed at:", worker.UpdatedAt)
+	fmt.Printf("\n  %-16s %s\n", "Invoke URL:", invokeURL)
 }
