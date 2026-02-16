@@ -105,31 +105,24 @@ func installDeps(ctx context.Context, rt, deps, pm, runtimeBin string, env []str
 	var cmd *exec.Cmd
 	switch rt {
 	case "javascript", "typescript":
+		// Determine manifest filename: deno.json for Deno import maps, package.json otherwise
+		manifestFile := "package.json"
+		if pm == "deno" || strings.Contains(deps, `"imports"`) {
+			manifestFile = "deno.json"
+		}
+		if err := os.WriteFile(filepath.Join(dir, manifestFile), []byte(deps), 0o644); err != nil {
+			return "", fmt.Errorf("write %s: %w", manifestFile, err)
+		}
 		switch pm {
 		case "deno":
-			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(deps), 0o644); err != nil {
-				return "", fmt.Errorf("write package.json: %w", err)
-			}
 			cmd = exec.CommandContext(ctx, "deno", "install")
 		case "yarn":
-			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(deps), 0o644); err != nil {
-				return "", fmt.Errorf("write package.json: %w", err)
-			}
 			cmd = exec.CommandContext(ctx, "yarn", "install", "--production")
 		case "pnpm":
-			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(deps), 0o644); err != nil {
-				return "", fmt.Errorf("write package.json: %w", err)
-			}
 			cmd = exec.CommandContext(ctx, "pnpm", "install", "--prod")
 		case "bun":
-			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(deps), 0o644); err != nil {
-				return "", fmt.Errorf("write package.json: %w", err)
-			}
 			cmd = exec.CommandContext(ctx, "bun", "install", "--production")
 		default: // npm
-			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(deps), 0o644); err != nil {
-				return "", fmt.Errorf("write package.json: %w", err)
-			}
 			cmd = exec.CommandContext(ctx, "npm", "install", "--omit=dev", "--no-audit", "--no-fund")
 		}
 	case "python":
@@ -137,11 +130,29 @@ func installDeps(ctx context.Context, rt, deps, pm, runtimeBin string, env []str
 			return "", fmt.Errorf("write requirements.txt: %w", err)
 		}
 		reqFile := filepath.Join(dir, "requirements.txt")
+		venvDir := filepath.Join(dir, ".venv")
+
+		// Create venv if it doesn't exist
+		if _, err := os.Stat(venvDir); err != nil {
+			var venvCmd *exec.Cmd
+			if pm == "uv" {
+				venvCmd = exec.CommandContext(ctx, "uv", "venv", venvDir, "--python", runtimeBin)
+			} else {
+				venvCmd = exec.CommandContext(ctx, runtimeBin, "-m", "venv", venvDir)
+			}
+			venvCmd.Dir = dir
+			venvCmd.Env = append(env, "HOME="+os.Getenv("HOME"))
+			if out, err := venvCmd.CombinedOutput(); err != nil {
+				return "", fmt.Errorf("create venv failed: %s\n%s", err, string(out))
+			}
+		}
+
+		venvPython := filepath.Join(venvDir, "bin", "python")
 		switch pm {
 		case "uv":
-			cmd = exec.CommandContext(ctx, "uv", "pip", "install", "-q", "--target", dir, "-r", reqFile)
+			cmd = exec.CommandContext(ctx, "uv", "pip", "install", "-q", "--python", venvPython, "-r", reqFile)
 		default: // pip
-			cmd = exec.CommandContext(ctx, runtimeBin, "-m", "pip", "install", "-q", "--target", dir, "-r", reqFile)
+			cmd = exec.CommandContext(ctx, venvPython, "-m", "pip", "install", "-q", "-r", reqFile)
 		}
 	case "go":
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(deps), 0o644); err != nil {

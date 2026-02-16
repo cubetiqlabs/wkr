@@ -21,6 +21,34 @@ func detectDepsFile(runtime string) string {
 			return f
 		}
 	}
+	// Python: if .venv exists but no manifest, generate requirements.txt from venv
+	if runtime == "python" {
+		if _, err := os.Stat(".venv"); err == nil {
+			if req := freezeVenv(); req != "" {
+				os.WriteFile("requirements.txt", []byte(req), 0o644)
+				fmt.Println("✓ Generated requirements.txt from .venv")
+				return "requirements.txt"
+			}
+		}
+	}
+	return ""
+}
+
+// freezeVenv exports installed packages from .venv as requirements.txt content.
+func freezeVenv() string {
+	// Try uv first, then pip
+	for _, args := range [][]string{
+		{"uv", "pip", "freeze", "--python", ".venv/bin/python"},
+		{".venv/bin/python", "-m", "pip", "freeze"},
+	} {
+		if _, err := exec.LookPath(args[0]); err != nil {
+			continue
+		}
+		out, err := exec.Command(args[0], args[1:]...).Output()
+		if err == nil && len(out) > 0 {
+			return string(out)
+		}
+	}
 	return ""
 }
 
@@ -86,6 +114,25 @@ func installLocalDeps(cfg *WorkerConfig) (manifestContent string, manifestFile s
 
 	fmt.Printf("Installing dependencies (%s)...\n", pm)
 
+	// Python: ensure .venv exists before installing
+	if (cfg.Runtime == "python") {
+		if _, err := os.Stat(".venv"); err != nil {
+			fmt.Println("Creating virtual environment...")
+			var venvCmd *exec.Cmd
+			if pm == "uv" {
+				venvCmd = exec.Command("uv", "venv", ".venv")
+			} else {
+				pyBin := resolveLocalRuntime("python", cfg.RuntimeVersion)
+				venvCmd = exec.Command(pyBin, "-m", "venv", ".venv")
+			}
+			venvCmd.Stdout = os.Stderr
+			venvCmd.Stderr = os.Stderr
+			if err := venvCmd.Run(); err != nil {
+				fatal("failed to create venv: " + err.Error())
+			}
+		}
+	}
+
 	var cmd *exec.Cmd
 	switch pm {
 	case "npm":
@@ -99,9 +146,17 @@ func installLocalDeps(cfg *WorkerConfig) (manifestContent string, manifestFile s
 	case "deno":
 		cmd = exec.Command("deno", "install")
 	case "pip":
-		cmd = exec.Command("pip", "install", "-q", "-r", "requirements.txt")
+		if _, err := os.Stat(".venv"); err == nil {
+			cmd = exec.Command(".venv/bin/python", "-m", "pip", "install", "-q", "-r", "requirements.txt")
+		} else {
+			cmd = exec.Command("pip", "install", "-q", "-r", "requirements.txt")
+		}
 	case "uv":
-		cmd = exec.Command("uv", "pip", "install", "-q", "-r", "requirements.txt")
+		if _, err := os.Stat(".venv"); err == nil {
+			cmd = exec.Command("uv", "pip", "install", "-q", "--python", ".venv/bin/python", "-r", "requirements.txt")
+		} else {
+			cmd = exec.Command("uv", "pip", "install", "-q", "-r", "requirements.txt")
+		}
 	case "go":
 		cmd = exec.Command("go", "mod", "download")
 	default:
@@ -148,9 +203,17 @@ func needsInstall(runtime, pm string) bool {
 			return false
 		}
 	case "python":
-		// Always install — pip is idempotent and fast for already-installed packages
+		// Install if requirements.txt exists (pip/uv are fast for already-installed)
 		if _, err := os.Stat("requirements.txt"); err != nil {
 			return false
+		}
+		// If .venv exists and is newer than requirements.txt, skip
+		if vInfo, err := os.Stat(".venv"); err == nil {
+			if rInfo, err := os.Stat("requirements.txt"); err == nil {
+				if vInfo.ModTime().After(rInfo.ModTime()) {
+					return false
+				}
+			}
 		}
 		return true
 	case "go":

@@ -381,7 +381,7 @@ func (e *SandboxEngine) verifyJS(ctx context.Context, code, ext, jsBin, deps, pm
 		depsDir = dir
 	}
 
-	// Write code file — into deps dir when deps exist so node_modules resolves
+	// Write code file — into deps dir when deps exist so imports resolve
 	writeDir := os.TempDir()
 	if depsDir != "" {
 		writeDir = depsDir
@@ -397,7 +397,7 @@ func (e *SandboxEngine) verifyJS(ctx context.Context, code, ext, jsBin, deps, pm
 	var cmd *exec.Cmd
 	if isDeno {
 		if hasDeps {
-			// Deno resolves node_modules relative to the file URL — must use relative path from deps dir
+			// Use relative path from deps dir so Deno resolves deno.json/node_modules
 			cmd = exec.CommandContext(ctx, jsBin, "check", "--node-modules-dir=auto", filename)
 			cmd.Dir = depsDir
 		} else {
@@ -445,6 +445,7 @@ func (e *SandboxEngine) executePython(ctx context.Context, req *ExecutionRequest
 	env := e.buildWorkerEnv(req.EnvVars)
 
 	// Install pip dependencies if provided
+	var execPyBin string = pyBin
 	if req.Dependencies != "" {
 		depsDir, err := installDeps(ctx, "python", req.Dependencies, req.PackageManager, pyBin, env)
 		if err != nil {
@@ -453,7 +454,14 @@ func (e *SandboxEngine) executePython(ctx context.Context, req *ExecutionRequest
 				Error:      "install deps: " + err.Error(),
 			}, nil
 		}
-		env = append(env, "PYTHONPATH="+depsDir)
+		// Use the venv python so native extensions resolve correctly
+		venvPython := filepath.Join(depsDir, ".venv", "bin", "python")
+		if _, err := os.Stat(venvPython); err == nil {
+			execPyBin = venvPython
+			env = append(env, "VIRTUAL_ENV="+filepath.Join(depsDir, ".venv"))
+		} else {
+			env = append(env, "PYTHONPATH="+depsDir)
+		}
 	}
 
 	stdout := e.getBuf()
@@ -461,7 +469,7 @@ func (e *SandboxEngine) executePython(ctx context.Context, req *ExecutionRequest
 	defer e.putBuf(stdout)
 	defer e.putBuf(stderr)
 
-	cmd := exec.CommandContext(ctx, pyBin, tmpFile)
+	cmd := exec.CommandContext(ctx, execPyBin, tmpFile)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

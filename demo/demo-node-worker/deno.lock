@@ -1,0 +1,16 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:lodash@^4.17.23": "4.17.23"
+  },
+  "npm": {
+    "lodash@4.17.23": {
+      "integrity": "sha512-LgVTMpQtIopCi79SJeDiP0TfWi5CNEc/L/aRdTh3yIvmZXTnheWpKjSZhnvMl8iXbC1tFg9gdHHDMLoV7CnG+w=="
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "npm:lodash@^4.17.23"
+    ]
+  }
+}

@@ -2,3 +2,7 @@ name: demo-node-worker
 runtime: javascript
 entry_point: main
 main: worker.js
+env_vars: 
+  API_KEY: sk-123456789
+
+package_manager: deno

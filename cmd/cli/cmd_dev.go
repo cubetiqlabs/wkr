@@ -306,6 +306,10 @@ sys.stdout.write(output)
 	defer os.Remove(tmp)
 
 	pyBin := resolveLocalRuntime("python", version)
+	// Prefer .venv python if it exists (has deps installed)
+	if _, err := os.Stat(".venv/bin/python"); err == nil {
+		pyBin = ".venv/bin/python"
+	}
 	cmd := exec.Command(pyBin, tmp)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = buildLocalEnv(envVars)
