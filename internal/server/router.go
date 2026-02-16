@@ -96,6 +96,7 @@ func (r *Router) Setup() *middleware.RateLimiter {
 	workers.Post("/", r.workerHandler.Create)
 	workers.Get("/", r.workerHandler.List)
 	workers.Put("/by-name/:name", r.workerHandler.UpdateByName)
+	workers.Get("/by-name/:name", r.workerHandler.GetByName)
 	workers.Delete("/by-name/:name", r.workerHandler.DeleteByName)
 	workers.Get("/by-name/:name/revisions", r.workerHandler.ListRevisions)
 	workers.Post("/by-name/:name/rollback", r.workerHandler.Rollback)

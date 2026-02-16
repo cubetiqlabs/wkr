@@ -87,6 +87,20 @@ func (h *WorkerHandler) Get(c fiber.Ctx) error {
 	return ok(c, worker)
 }
 
+func (h *WorkerHandler) GetByName(c fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return errResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	worker, err := h.workerService.GetWorkerByNameForOwner(c.Context(), c.Params("name"), userID)
+	if err != nil {
+		return errResponse(c, fiber.StatusNotFound, ERROR_WORKER_NOT_FOUND)
+	}
+
+	return ok(c, worker)
+}
+
 func (h *WorkerHandler) List(c fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {

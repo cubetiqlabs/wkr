@@ -96,16 +96,17 @@ func cmdDeploy() {
 		rt += " " + worker.RuntimeVersion
 	}
 
-	fmt.Printf("  %-16s %s\n", "Name:", worker.Name)
-	fmt.Printf("  %-16s v%d\n", "Version:", worker.Version)
-	fmt.Printf("  %-16s %s\n", "Status:", worker.Status)
-	fmt.Printf("  %-16s %s\n", "Runtime:", rt)
-	fmt.Printf("  %-16s %s\n", "Entry point:", worker.EntryPoint)
-	fmt.Printf("  %-16s %s\n", "Code hash:", worker.CodeHash[:12])
+	str := "  %-16s %s\n"
+	fmt.Printf(str, "Name:", worker.Name)
+	fmt.Printf(str, "Version:", fmt.Sprintf("v%d", worker.Version))
+	fmt.Printf(str, "Status:", worker.Status)
+	fmt.Printf(str, "Runtime:", rt)
+	fmt.Printf(str, "Entry point:", worker.EntryPoint)
+	fmt.Printf(str, "Code hash:", worker.CodeHash[:12])
 	if worker.PackageManager != "" {
-		fmt.Printf("  %-16s %s\n", "Package mgr:", worker.PackageManager)
+		fmt.Printf(str, "Package mgr:", worker.PackageManager)
 	}
-	fmt.Printf("  %-16s %d MB\n", "Memory limit:", worker.MemoryLimit)
-	fmt.Printf("  %-16s %s\n", "Deployed at:", worker.UpdatedAt)
-	fmt.Printf("\n  %-16s %s\n", "Invoke URL:", invokeURL)
+	fmt.Printf(str, "Memory limit:", fmt.Sprintf("%d MB", worker.MemoryLimit))
+	fmt.Printf(str, "Deployed at:", worker.UpdatedAt)
+	fmt.Printf("\n"+str, "Invoke URL:", invokeURL)
 }

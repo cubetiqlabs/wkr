@@ -24,6 +24,8 @@ func main() {
 		cmdInit()
 	case "deploy":
 		cmdDeploy()
+	case "info":
+		cmdInfo()
 	case "dev":
 		cmdDev()
 	case "list", "ls":
@@ -64,6 +66,7 @@ Commands:
   whoami             Show current authenticated user
   init               Initialize a new worker project
   deploy             Deploy the current worker to the platform
+  info               Show worker deploy info
   dev                Run worker locally (no deploy needed)
   list, ls           List your deployed workers
   invoke             Invoke a worker by name

@@ -1,0 +1,10 @@
+bin/
+.kiro
+.vscode/
+.github/
+demo/
+examples/
+docs/
+schemas/
+deploy/
+scripts/
