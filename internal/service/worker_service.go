@@ -130,6 +130,12 @@ func (s *WorkerService) Create(ctx context.Context, ownerID uuid.UUID, input Cre
 
 	// Return with decrypted env vars for the response
 	w.EnvVars = input.EnvVars
+
+	// Pre-install dependencies so first invoke is fast
+	if s.engine != nil && input.Dependencies != "" {
+		go s.engine.PreInstallDeps(context.Background(), string(input.Runtime), input.RuntimeVersion, input.Dependencies, input.PackageManager)
+	}
+
 	return w, nil
 }
 
@@ -227,6 +233,12 @@ func (s *WorkerService) Update(ctx context.Context, id, ownerID uuid.UUID, input
 	}
 
 	w.EnvVars = maskEnvVars(w.EnvVars)
+
+	// Pre-install dependencies so first invoke is fast
+	if s.engine != nil && w.Dependencies != "" {
+		go s.engine.PreInstallDeps(context.Background(), string(w.Runtime), w.RuntimeVersion, w.Dependencies, w.PackageManager)
+	}
+
 	return w, nil
 }
 

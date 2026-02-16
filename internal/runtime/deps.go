@@ -174,3 +174,12 @@ func installDeps(ctx context.Context, rt, deps, pm, runtimeBin string, env []str
 	os.WriteFile(marker, []byte("ok"), 0o644)
 	return dir, nil
 }
+
+// PreInstallDeps warms the dependency cache so the first invoke doesn't pay install cost.
+func (e *SandboxEngine) PreInstallDeps(ctx context.Context, rt, version, deps, pm string) {
+	if strings.TrimSpace(deps) == "" {
+		return
+	}
+	bin := resolveRuntime(rt, version)
+	installDeps(ctx, rt, deps, pm, bin, e.hostEnv)
+}
