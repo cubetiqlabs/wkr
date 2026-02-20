@@ -80,7 +80,7 @@ services:
 
   # ── Observability ──
   prometheus:
-    image: prom/prometheus:v3.4.1
+    image: prom/prometheus:latest
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -94,7 +94,7 @@ services:
       - internal
 
   grafana:
-    image: grafana/grafana:12.0.1
+    image: grafana/grafana:latest
     ports:
       - "3002:3000"
     environment:
