@@ -1,6 +1,10 @@
 package handler
 
-import "github.com/gofiber/fiber/v3"
+import (
+	"strings"
+
+	"github.com/gofiber/fiber/v3"
+)
 
 // Response is a standard API response envelope.
 type Response struct {
@@ -30,4 +34,21 @@ func created(c fiber.Ctx, data interface{}) error {
 
 func errResponse(c fiber.Ctx, status int, msg string) error {
 	return c.Status(status).JSON(Response{Success: false, Error: msg})
+}
+
+// clientIP extracts the real client IP from proxy headers, falling back to c.IP().
+// Priority: CF-Connecting-IP (Cloudflare) → X-Real-IP (nginx) → X-Forwarded-For (first IP) → c.IP()
+func clientIP(c fiber.Ctx) string {
+	if ip := c.Get("CF-Connecting-IP"); ip != "" {
+		return ip
+	}
+	if ip := c.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	if fwd := c.Get("X-Forwarded-For"); fwd != "" {
+		if ip, _, _ := strings.Cut(fwd, ","); ip != "" {
+			return strings.TrimSpace(ip)
+		}
+	}
+	return c.IP()
 }

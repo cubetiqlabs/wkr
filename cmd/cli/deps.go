@@ -81,6 +81,9 @@ func detectPackageManager(cfg *WorkerConfig) string {
 		if _, err := exec.LookPath("uv"); err == nil {
 			return "uv"
 		}
+		if _, err := exec.LookPath("pip3"); err == nil {
+			return "pip3"
+		}
 		return "pip"
 	case "go":
 		return "go"
@@ -145,11 +148,15 @@ func installLocalDeps(cfg *WorkerConfig) (manifestContent string, manifestFile s
 		cmd = exec.Command("bun", "install")
 	case "deno":
 		cmd = exec.Command("deno", "install")
-	case "pip":
+	case "pip", "pip3":
 		if _, err := os.Stat(".venv"); err == nil {
 			cmd = exec.Command(".venv/bin/python", "-m", "pip", "install", "-q", "-r", "requirements.txt")
 		} else {
-			cmd = exec.Command("pip", "install", "-q", "-r", "requirements.txt")
+			pipBin := "pip"
+			if _, err := exec.LookPath("pip"); err != nil {
+				pipBin = "pip3"
+			}
+			cmd = exec.Command(pipBin, "install", "-q", "-r", "requirements.txt")
 		}
 	case "uv":
 		if _, err := os.Stat(".venv"); err == nil {

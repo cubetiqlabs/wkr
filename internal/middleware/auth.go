@@ -90,7 +90,7 @@ func RequestLogger() fiber.Handler {
 			zap.String("method", c.Method()),
 			zap.String("path", c.Path()),
 			zap.Int("status", c.Response().StatusCode()),
-			zap.String("ip", c.IP()),
+			zap.String("ip", clientIP(c)),
 		)
 		return err
 	}

@@ -90,6 +90,10 @@ func installDeps(ctx context.Context, rt, deps, pm, runtimeBin string, env []str
 	if pm == "" {
 		pm = defaultPM(rt)
 	}
+	// Normalize pip3 → pip
+	if pm == "pip3" {
+		pm = "pip"
+	}
 
 	key := depsHash(pm, deps)
 	dir := filepath.Join(depsCacheBase, key)
@@ -131,28 +135,50 @@ func installDeps(ctx context.Context, rt, deps, pm, runtimeBin string, env []str
 		}
 		reqFile := filepath.Join(dir, "requirements.txt")
 		venvDir := filepath.Join(dir, ".venv")
+		homeEnv := "HOME=" + os.Getenv("HOME")
 
 		// Create venv if it doesn't exist
-		if _, err := os.Stat(venvDir); err != nil {
-			var venvCmd *exec.Cmd
+		if _, err := os.Stat(filepath.Join(venvDir, "bin", "python")); err != nil {
+			os.RemoveAll(venvDir) // clean partial state
+			created := false
 			if pm == "uv" {
-				venvCmd = exec.CommandContext(ctx, "uv", "venv", venvDir, "--python", runtimeBin)
-			} else {
-				venvCmd = exec.CommandContext(ctx, runtimeBin, "-m", "venv", venvDir)
+				venvCmd := exec.CommandContext(ctx, "uv", "venv", venvDir, "--python", runtimeBin)
+				venvCmd.Dir = dir
+				venvCmd.Env = append(env, homeEnv)
+				if out, err := venvCmd.CombinedOutput(); err == nil {
+					created = true
+				} else {
+					// uv venv failed (OOM/killed) — fall back to stdlib venv
+					os.RemoveAll(venvDir)
+					_ = out
+				}
 			}
-			venvCmd.Dir = dir
-			venvCmd.Env = append(env, "HOME="+os.Getenv("HOME"))
-			if out, err := venvCmd.CombinedOutput(); err != nil {
-				return "", fmt.Errorf("create venv failed: %s\n%s", err, string(out))
+			if !created {
+				venvCmd := exec.CommandContext(ctx, runtimeBin, "-m", "venv", venvDir)
+				venvCmd.Dir = dir
+				venvCmd.Env = append(env, homeEnv)
+				if out, err := venvCmd.CombinedOutput(); err != nil {
+					return "", fmt.Errorf("create venv failed: %s\n%s", err, string(out))
+				}
 			}
 		}
 
 		venvPython := filepath.Join(venvDir, "bin", "python")
-		switch pm {
-		case "uv":
+		if pm == "uv" {
+			// Try uv first, fall back to pip on failure
 			cmd = exec.CommandContext(ctx, "uv", "pip", "install", "-q", "--python", venvPython, "-r", reqFile)
-		default: // pip
-			cmd = exec.CommandContext(ctx, venvPython, "-m", "pip", "install", "-q", "-r", reqFile)
+			cmd.Dir = dir
+			cmd.Env = append(env, homeEnv, "VIRTUAL_ENV="+venvDir)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				// uv killed/OOM — fall back to pip inside venv
+				cmd = exec.CommandContext(ctx, venvPython, "-m", "pip", "install", "-q", "--no-input", "-r", reqFile)
+			} else {
+				_ = out
+				os.WriteFile(marker, []byte("ok"), 0o644)
+				return dir, nil
+			}
+		} else {
+			cmd = exec.CommandContext(ctx, venvPython, "-m", "pip", "install", "-q", "--no-input", "-r", reqFile)
 		}
 	case "go":
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(deps), 0o644); err != nil {

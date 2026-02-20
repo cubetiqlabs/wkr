@@ -162,7 +162,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 		RequestBytes: requestBytes,
 		Method:       c.Method(),
 		Path:         reqPath,
-		ClientIP:     c.IP(),
+		ClientIP:     clientIP(c),
 		UserAgent:    c.Get("User-Agent"),
 		StatusCode:   500, // default to error; overwritten on success
 	}
@@ -258,7 +258,7 @@ func (h *InvokeHandler) Invoke(c fiber.Ctx) error {
 
 	// Security blocked
 	if result.StatusCode == 403 && result.Error != "" {
-		h.auditor.Log(c.Context(), "code_blocked", "warn", result.Error, c.IP(), worker.OwnerID, worker.ID)
+		h.auditor.Log(c.Context(), "code_blocked", "warn", result.Error, clientIP(c), worker.OwnerID, worker.ID)
 		return c.Status(fiber.StatusForbidden).JSON(WorkerErrorDetail{
 			Error:     result.Error,
 			RequestID: requestID,

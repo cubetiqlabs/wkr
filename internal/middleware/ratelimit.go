@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -34,7 +35,7 @@ func NewRateLimiter(rate int, window time.Duration) *RateLimiter {
 
 func (rl *RateLimiter) Handler() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		ip := c.IP()
+		ip := clientIP(c)
 
 		rl.mu.Lock()
 		v, exists := rl.visitors[ip]
@@ -86,4 +87,19 @@ func (rl *RateLimiter) cleanup() {
 			return
 		}
 	}
+}
+
+func clientIP(c fiber.Ctx) string {
+	if ip := c.Get("CF-Connecting-IP"); ip != "" {
+		return ip
+	}
+	if ip := c.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	if fwd := c.Get("X-Forwarded-For"); fwd != "" {
+		if ip, _, _ := strings.Cut(fwd, ","); ip != "" {
+			return strings.TrimSpace(ip)
+		}
+	}
+	return c.IP()
 }

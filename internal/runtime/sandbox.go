@@ -458,7 +458,12 @@ func (e *SandboxEngine) executePython(ctx context.Context, req *ExecutionRequest
 		venvPython := filepath.Join(depsDir, ".venv", "bin", "python")
 		if _, err := os.Stat(venvPython); err == nil {
 			execPyBin = venvPython
-			env = append(env, "VIRTUAL_ENV="+filepath.Join(depsDir, ".venv"))
+			venvDir := filepath.Join(depsDir, ".venv")
+			venvBin := filepath.Join(venvDir, "bin")
+			env = append(env,
+				"VIRTUAL_ENV="+venvDir,
+				"PATH="+venvBin+":"+os.Getenv("PATH"),
+			)
 		} else {
 			env = append(env, "PYTHONPATH="+depsDir)
 		}

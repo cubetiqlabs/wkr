@@ -40,7 +40,7 @@
     "package_manager": {
       "type": "string",
       "description": "Package manager for dependency installation. Auto-detected from lockfiles if not set (e.g. deno.lock → deno, yarn.lock → yarn, pnpm-lock.yaml → pnpm).",
-      "enum": ["npm", "yarn", "pnpm", "bun", "deno", "pip", "uv", "go"],
+      "enum": ["npm", "yarn", "pnpm", "bun", "deno", "pip", "pip3", "uv", "go"],
       "examples": ["deno", "npm"]
     },
     "env_vars": {
@@ -113,7 +113,7 @@
             "examples": ["3.11", "3.12", "3.13"]
           },
           "package_manager": {
-            "enum": ["pip", "uv"]
+            "enum": ["pip", "pip3", "uv"]
           }
         }
       }
