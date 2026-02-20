@@ -25,6 +25,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
 
   # ── Edge Node ──
   edge-1:
@@ -56,6 +58,8 @@ services:
       timeout: 5s
       retries: 5
     profiles: ["edge"]
+    networks:
+      - internal
 
   # ── Database ──
   db:
@@ -73,6 +77,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
 
   # ── Observability ──
   prometheus:
@@ -88,6 +94,8 @@ services:
     depends_on:
       - app
     profiles: ["monitoring"]
+    networks:
+      - internal
 
   grafana:
     image: grafana/grafana:12.0.1
@@ -105,8 +113,17 @@ services:
     depends_on:
       - prometheus
     profiles: ["monitoring"]
+    networks:
+      - internal
 
 volumes:
   pgdata:
   prometheus_data:
   grafana_data:
+
+networks:
+  internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.200.0/24
