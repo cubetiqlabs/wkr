@@ -1,6 +1,7 @@
 services:
   # ── Control Plane ──
   app:
+    image: ${COMPOSE_PROJECT_NAME:-cubis-wkr}:latest
     build: .
     hostname: app
     ports:
@@ -30,6 +31,7 @@ services:
 
   # ── Edge Node ──
   edge-1:
+    image: ${COMPOSE_PROJECT_NAME:-cubis-wkr}:latest
     build: .
     hostname: edge-1
     environment:
