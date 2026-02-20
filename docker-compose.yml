@@ -4,7 +4,7 @@ services:
     build: .
     hostname: app
     ports:
-      - "8080:8080"
+      - "8083:8080"
     environment:
       - CUBIS_CONFIG=/app/config.yml
       - CUBIS_EDGE_ADVERTISE_ADDR=http://app:8080
@@ -32,8 +32,6 @@ services:
   edge-1:
     build: .
     hostname: edge-1
-    ports:
-      - "8081:8080"
     environment:
       - CUBIS_CONFIG=/app/config-edge.yml
       - CUBIS_EDGE_ADVERTISE_ADDR=http://edge-1:8080
@@ -68,8 +66,6 @@ services:
       POSTGRES_USER: cubis
       POSTGRES_PASSWORD: cubis_secret
       POSTGRES_DB: cubis_wkr
-    ports:
-      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -83,8 +79,6 @@ services:
   # ── Observability ──
   prometheus:
     image: prom/prometheus:v3.4.1
-    ports:
-      - "9090:9090"
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -100,7 +94,7 @@ services:
   grafana:
     image: grafana/grafana:12.0.1
     ports:
-      - "3000:3000"
+      - "3002:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=cubis
