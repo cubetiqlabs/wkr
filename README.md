@@ -23,7 +23,7 @@ internal/
 
 ## Tech Stack
 
-- **Go 1.25** — core platform language
+- **Go 1.27** — core platform language
 - **GoFiber v3** — high-performance HTTP framework
 - **PostgreSQL + GORM** — persistent storage with ORM
 - **Viper** — YAML configuration management
